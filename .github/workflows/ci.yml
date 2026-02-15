@@ -50,6 +50,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --verbose
+      - name: Check benchmarks compile
+        run: cargo test --benches --no-run
 
   # Run tests with different Rust versions
   msrv:

@@ -8,10 +8,22 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.78"
 license = "MIT"
-description = "SQLite session extension support for Diesel ORM"
+description = "SQLite session extension support for Diesel ORM - track changes and generate changesets/patchsets for replication"
 repository = "https://github.com/LucaCappelletti94/diesel-sqlite-session"
+homepage = "https://github.com/LucaCappelletti94/diesel-sqlite-session"
+documentation = "https://docs.rs/diesel-sqlite-session"
+readme = "README.md"
 keywords = ["diesel", "sqlite", "session", "changeset", "replication"]
-categories = ["database"]
+categories = ["database", "database-implementations"]
+include = [
+    "src/**/*",
+    "Cargo.toml",
+    "README.md",
+    "LICENSE",
+]
+# Publishing blocked until diesel-rs/diesel#4966 is merged (exposes `with_raw_connection` API)
+# Once merged, change diesel dependency from git to crates.io version
+publish = false
 
 [dependencies]
 # Using fork with `with_raw_connection` API until diesel-rs/diesel#4966 is merged
