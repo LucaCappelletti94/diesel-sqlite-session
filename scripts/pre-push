@@ -1,0 +1,29 @@
+#!/bin/bash
+# Pre-push hook for diesel-sqlite-session
+# This runs full tests before pushing
+
+set -e
+
+echo "Running pre-push checks..."
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${YELLOW}Running tests...${NC}"
+if ! cargo test --all-features; then
+    echo -e "${RED}Tests failed!${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Tests OK${NC}"
+
+echo -e "${YELLOW}Running doc tests...${NC}"
+if ! cargo test --doc; then
+    echo -e "${RED}Doc tests failed!${NC}"
+    exit 1
+fi
+echo -e "${GREEN}Doc tests OK${NC}"
+
+echo -e "${GREEN}All pre-push checks passed!${NC}"

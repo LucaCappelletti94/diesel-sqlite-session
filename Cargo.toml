@@ -1,0 +1,47 @@
+[workspace]
+members = [".", "wasm-tests", "wasm-bench"]
+default-members = ["."]
+
+[package]
+name = "diesel-sqlite-session"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.78"
+license = "MIT"
+description = "SQLite session extension support for Diesel ORM"
+repository = "https://github.com/LucaCappelletti94/diesel-sqlite-session"
+keywords = ["diesel", "sqlite", "session", "changeset", "replication"]
+categories = ["database"]
+
+[dependencies]
+# Using fork with `with_raw_connection` API until diesel-rs/diesel#4966 is merged
+diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite-session-changeset", features = ["sqlite"] }
+thiserror = "2"
+
+# Native targets: use libsqlite3-sys
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+libsqlite3-sys = { version = "0.36", features = ["bundled", "session"] }
+
+# WASM targets: use sqlite-wasm-rs
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+sqlite-wasm-rs = "0.5"
+
+[dev-dependencies]
+diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite-session-changeset", features = ["sqlite"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
+rusqlite = { version = "0.38", features = ["bundled", "session", "buildtime_bindgen"] }
+
+[[bench]]
+name = "session_benchmarks"
+harness = false
+
+[[bench]]
+name = "comparison_benchmarks"
+harness = false
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
