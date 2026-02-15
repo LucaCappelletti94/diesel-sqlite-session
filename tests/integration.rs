@@ -43,6 +43,52 @@ diesel::table! {
     }
 }
 
+#[derive(Insertable)]
+#[diesel(table_name = items)]
+struct NewItem<'a> {
+    id: i32,
+    name: &'a str,
+    quantity: Option<i32>,
+}
+
+#[derive(Queryable, Selectable)]
+#[diesel(table_name = items)]
+#[allow(dead_code)]
+struct Item {
+    id: i32,
+    name: String,
+    quantity: Option<i32>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = users)]
+struct NewUser<'a> {
+    id: i32,
+    username: Option<&'a str>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = posts)]
+struct NewPost<'a> {
+    id: i32,
+    user_id: Option<i32>,
+    content: Option<&'a str>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = tracked)]
+struct NewTracked<'a> {
+    id: i32,
+    val: Option<&'a str>,
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = untracked)]
+struct NewUntracked<'a> {
+    id: i32,
+    val: Option<&'a str>,
+}
+
 /// Helper to create an in-memory connection with a test table.
 fn setup_connection() -> SqliteConnection {
     let mut conn = SqliteConnection::establish(":memory:").unwrap();
@@ -50,13 +96,6 @@ fn setup_connection() -> SqliteConnection {
         .execute(&mut conn)
         .unwrap();
     conn
-}
-
-/// Helper to get row count from a table.
-fn count_rows(conn: &mut SqliteConnection, table: &str) -> i64 {
-    diesel::dsl::sql::<diesel::sql_types::BigInt>(&format!("SELECT COUNT(*) FROM {table}"))
-        .get_result(conn)
-        .unwrap()
 }
 
 #[test]
@@ -68,14 +107,25 @@ fn test_full_replication_workflow() {
     let mut session = source.create_session().unwrap();
     session.attach::<items::table>().unwrap();
 
-    // Make changes
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Apple', 10)")
-        .execute(&mut source)
-        .unwrap();
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (2, 'Banana', 20)")
-        .execute(&mut source)
-        .unwrap();
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (3, 'Cherry', 30)")
+    // Make changes using Diesel ORM
+    diesel::insert_into(items::table)
+        .values(&[
+            NewItem {
+                id: 1,
+                name: "Apple",
+                quantity: Some(10),
+            },
+            NewItem {
+                id: 2,
+                name: "Banana",
+                quantity: Some(20),
+            },
+            NewItem {
+                id: 3,
+                name: "Cherry",
+                quantity: Some(30),
+            },
+        ])
         .execute(&mut source)
         .unwrap();
 
@@ -85,7 +135,13 @@ fn test_full_replication_workflow() {
 
     // Replica database
     let mut replica = setup_connection();
-    assert_eq!(count_rows(&mut replica, "items"), 0);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        0
+    );
 
     // Apply patchset
     replica
@@ -93,14 +149,21 @@ fn test_full_replication_workflow() {
         .unwrap();
 
     // Verify replication
-    assert_eq!(count_rows(&mut replica, "items"), 3);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        3
+    );
 
     // Verify data integrity
-    let name: String =
-        diesel::dsl::sql::<diesel::sql_types::Text>("SELECT name FROM items WHERE id = 2")
-            .get_result(&mut replica)
-            .unwrap();
-    assert_eq!(name, "Banana");
+    let item: Item = items::table
+        .filter(items::id.eq(2))
+        .select(Item::as_select())
+        .first(&mut replica)
+        .unwrap();
+    assert_eq!(item.name, "Banana");
 }
 
 #[test]
@@ -113,7 +176,12 @@ fn test_incremental_changes() {
         let mut session = source.create_session().unwrap();
         session.attach::<items::table>().unwrap();
 
-        sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Item1', 100)")
+        diesel::insert_into(items::table)
+            .values(NewItem {
+                id: 1,
+                name: "Item1",
+                quantity: Some(100),
+            })
             .execute(&mut source)
             .unwrap();
 
@@ -123,17 +191,30 @@ fn test_incremental_changes() {
             .unwrap();
     }
 
-    assert_eq!(count_rows(&mut replica, "items"), 1);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        1
+    );
 
     // Second batch of changes
     {
         let mut session = source.create_session().unwrap();
         session.attach::<items::table>().unwrap();
 
-        sql_query("INSERT INTO items (id, name, quantity) VALUES (2, 'Item2', 200)")
+        diesel::insert_into(items::table)
+            .values(NewItem {
+                id: 2,
+                name: "Item2",
+                quantity: Some(200),
+            })
             .execute(&mut source)
             .unwrap();
-        sql_query("UPDATE items SET quantity = 150 WHERE id = 1")
+
+        diesel::update(items::table.filter(items::id.eq(1)))
+            .set(items::quantity.eq(150))
             .execute(&mut source)
             .unwrap();
 
@@ -143,14 +224,21 @@ fn test_incremental_changes() {
             .unwrap();
     }
 
-    assert_eq!(count_rows(&mut replica, "items"), 2);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        2
+    );
 
     // Verify updated value
-    let qty: i32 =
-        diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT quantity FROM items WHERE id = 1")
-            .get_result(&mut replica)
-            .unwrap();
-    assert_eq!(qty, 150);
+    let item: Item = items::table
+        .filter(items::id.eq(1))
+        .select(Item::as_select())
+        .first(&mut replica)
+        .unwrap();
+    assert_eq!(item.quantity, Some(150));
 }
 
 #[test]
@@ -167,10 +255,20 @@ fn test_multiple_tables() {
     let mut session = source.create_session().unwrap();
     session.attach_all().unwrap();
 
-    sql_query("INSERT INTO users (id, username) VALUES (1, 'alice')")
+    diesel::insert_into(users::table)
+        .values(NewUser {
+            id: 1,
+            username: Some("alice"),
+        })
         .execute(&mut source)
         .unwrap();
-    sql_query("INSERT INTO posts (id, user_id, content) VALUES (1, 1, 'Hello World')")
+
+    diesel::insert_into(posts::table)
+        .values(NewPost {
+            id: 1,
+            user_id: Some(1),
+            content: Some("Hello World"),
+        })
         .execute(&mut source)
         .unwrap();
 
@@ -189,8 +287,20 @@ fn test_multiple_tables() {
         .apply_patchset(&patchset, |_| ConflictAction::Abort)
         .unwrap();
 
-    assert_eq!(count_rows(&mut replica, "users"), 1);
-    assert_eq!(count_rows(&mut replica, "posts"), 1);
+    assert_eq!(
+        users::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        posts::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -200,7 +310,12 @@ fn test_changeset_vs_patchset() {
     let mut session = source.create_session().unwrap();
     session.attach::<items::table>().unwrap();
 
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Test', 50)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Test",
+            quantity: Some(50),
+        })
         .execute(&mut source)
         .unwrap();
 
@@ -224,8 +339,20 @@ fn test_changeset_vs_patchset() {
         .apply_patchset(&patchset, |_| ConflictAction::Abort)
         .unwrap();
 
-    assert_eq!(count_rows(&mut replica1, "items"), 1);
-    assert_eq!(count_rows(&mut replica2, "items"), 1);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica1)
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica2)
+            .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -235,7 +362,12 @@ fn test_conflict_data_existing_row() {
     let mut session = source.create_session().unwrap();
     session.attach::<items::table>().unwrap();
 
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Source', 100)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Source",
+            quantity: Some(100),
+        })
         .execute(&mut source)
         .unwrap();
 
@@ -243,7 +375,12 @@ fn test_conflict_data_existing_row() {
 
     // Replica already has a row with id=1
     let mut replica = setup_connection();
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Replica', 999)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Replica",
+            quantity: Some(999),
+        })
         .execute(&mut replica)
         .unwrap();
 
@@ -252,11 +389,12 @@ fn test_conflict_data_existing_row() {
         .apply_patchset(&patchset, |_| ConflictAction::Replace)
         .unwrap();
 
-    let name: String =
-        diesel::dsl::sql::<diesel::sql_types::Text>("SELECT name FROM items WHERE id = 1")
-            .get_result(&mut replica)
-            .unwrap();
-    assert_eq!(name, "Source");
+    let item: Item = items::table
+        .filter(items::id.eq(1))
+        .select(Item::as_select())
+        .first(&mut replica)
+        .unwrap();
+    assert_eq!(item.name, "Source");
 }
 
 #[test]
@@ -266,7 +404,12 @@ fn test_conflict_omit_preserves_original() {
     let mut session = source.create_session().unwrap();
     session.attach::<items::table>().unwrap();
 
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Source', 100)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Source",
+            quantity: Some(100),
+        })
         .execute(&mut source)
         .unwrap();
 
@@ -274,7 +417,12 @@ fn test_conflict_omit_preserves_original() {
 
     // Replica already has different data
     let mut replica = setup_connection();
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Original', 500)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Original",
+            quantity: Some(500),
+        })
         .execute(&mut replica)
         .unwrap();
 
@@ -283,24 +431,31 @@ fn test_conflict_omit_preserves_original() {
         .apply_patchset(&patchset, |_| ConflictAction::Omit)
         .unwrap();
 
-    let name: String =
-        diesel::dsl::sql::<diesel::sql_types::Text>("SELECT name FROM items WHERE id = 1")
-            .get_result(&mut replica)
-            .unwrap();
-    assert_eq!(name, "Original");
+    let item: Item = items::table
+        .filter(items::id.eq(1))
+        .select(Item::as_select())
+        .first(&mut replica)
+        .unwrap();
+    assert_eq!(item.name, "Original");
 }
 
 #[test]
 fn test_delete_replication() {
     let mut source = setup_connection();
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'ToDelete', 1)")
+
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "ToDelete",
+            quantity: Some(1),
+        })
         .execute(&mut source)
         .unwrap();
 
     let mut session = source.create_session().unwrap();
     session.attach::<items::table>().unwrap();
 
-    sql_query("DELETE FROM items WHERE id = 1")
+    diesel::delete(items::table.filter(items::id.eq(1)))
         .execute(&mut source)
         .unwrap();
 
@@ -308,15 +463,32 @@ fn test_delete_replication() {
 
     // Replica has the row
     let mut replica = setup_connection();
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'ToDelete', 1)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "ToDelete",
+            quantity: Some(1),
+        })
         .execute(&mut replica)
         .unwrap();
-    assert_eq!(count_rows(&mut replica, "items"), 1);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        1
+    );
 
     replica
         .apply_patchset(&patchset, |_| ConflictAction::Abort)
         .unwrap();
-    assert_eq!(count_rows(&mut replica, "items"), 0);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        0
+    );
 }
 
 #[test]
@@ -327,20 +499,35 @@ fn test_session_disable_reenable() {
     session.attach::<items::table>().unwrap();
 
     // Enabled by default
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (1, 'Tracked', 10)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Tracked",
+            quantity: Some(10),
+        })
         .execute(&mut conn)
         .unwrap();
     assert!(!session.is_empty());
 
     // Disable tracking
     session.set_enabled(false);
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (2, 'NotTracked', 20)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 2,
+            name: "NotTracked",
+            quantity: Some(20),
+        })
         .execute(&mut conn)
         .unwrap();
 
     // Re-enable
     session.set_enabled(true);
-    sql_query("INSERT INTO items (id, name, quantity) VALUES (3, 'AlsoTracked', 30)")
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 3,
+            name: "AlsoTracked",
+            quantity: Some(30),
+        })
         .execute(&mut conn)
         .unwrap();
 
@@ -353,13 +540,20 @@ fn test_session_disable_reenable() {
         .unwrap();
 
     // Should have 2 rows (1 and 3), not 3
-    assert_eq!(count_rows(&mut replica, "items"), 2);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        2
+    );
 
     // Verify row 2 is missing
-    let count: i64 =
-        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM items WHERE id = 2")
-            .get_result(&mut replica)
-            .unwrap();
+    let count = items::table
+        .filter(items::id.eq(2))
+        .count()
+        .get_result::<i64>(&mut replica)
+        .unwrap();
     assert_eq!(count, 0);
 }
 
@@ -370,14 +564,19 @@ fn test_large_batch_changes() {
     let mut session = source.create_session().unwrap();
     session.attach::<items::table>().unwrap();
 
-    // Insert many rows
-    for i in 0..100 {
-        sql_query(format!(
-            "INSERT INTO items (id, name, quantity) VALUES ({i}, 'Item{i}', {i})"
-        ))
+    // Insert many rows using Diesel batch insert
+    let new_items: Vec<NewItem> = (0..100)
+        .map(|i| NewItem {
+            id: i,
+            name: "Item",
+            quantity: Some(i),
+        })
+        .collect();
+
+    diesel::insert_into(items::table)
+        .values(&new_items)
         .execute(&mut source)
         .unwrap();
-    }
 
     let patchset = session.patchset().unwrap();
     assert!(!patchset.is_empty());
@@ -387,7 +586,13 @@ fn test_large_batch_changes() {
         .apply_patchset(&patchset, |_| ConflictAction::Abort)
         .unwrap();
 
-    assert_eq!(count_rows(&mut replica, "items"), 100);
+    assert_eq!(
+        items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap(),
+        100
+    );
 }
 
 #[test]
@@ -432,10 +637,19 @@ fn test_selective_table_tracking() {
     let mut session = conn.create_session().unwrap();
     session.attach::<tracked::table>().unwrap();
 
-    sql_query("INSERT INTO tracked (id, val) VALUES (1, 'yes')")
+    diesel::insert_into(tracked::table)
+        .values(NewTracked {
+            id: 1,
+            val: Some("yes"),
+        })
         .execute(&mut conn)
         .unwrap();
-    sql_query("INSERT INTO untracked (id, val) VALUES (1, 'no')")
+
+    diesel::insert_into(untracked::table)
+        .values(NewUntracked {
+            id: 1,
+            val: Some("no"),
+        })
         .execute(&mut conn)
         .unwrap();
 
@@ -455,14 +669,14 @@ fn test_selective_table_tracking() {
         .unwrap();
 
     // Only tracked table should have data
-    let tracked_count: i64 =
-        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM tracked")
-            .get_result(&mut replica)
-            .unwrap();
-    let untracked_count: i64 =
-        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM untracked")
-            .get_result(&mut replica)
-            .unwrap();
+    let tracked_count = tracked::table
+        .count()
+        .get_result::<i64>(&mut replica)
+        .unwrap();
+    let untracked_count = untracked::table
+        .count()
+        .get_result::<i64>(&mut replica)
+        .unwrap();
 
     assert_eq!(tracked_count, 1);
     assert_eq!(untracked_count, 0);

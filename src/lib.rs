@@ -7,7 +7,7 @@ mod errors;
 mod ffi;
 mod session;
 
-pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError};
+pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError, SqliteErrorCode};
 pub use session::Session;
 
 use diesel::SqliteConnection;
@@ -146,6 +146,35 @@ mod tests {
         }
     }
 
+    #[derive(Insertable)]
+    #[diesel(table_name = test)]
+    struct NewTest<'a> {
+        id: i32,
+        value: Option<&'a str>,
+    }
+
+    #[derive(Queryable, Selectable)]
+    #[diesel(table_name = test)]
+    #[allow(dead_code)]
+    struct Test {
+        id: i32,
+        value: Option<String>,
+    }
+
+    #[derive(Insertable)]
+    #[diesel(table_name = users)]
+    struct NewUser<'a> {
+        id: i32,
+        name: Option<&'a str>,
+    }
+
+    #[derive(Insertable)]
+    #[diesel(table_name = items)]
+    struct NewItem<'a> {
+        id: i32,
+        data: Option<&'a str>,
+    }
+
     #[test]
     fn test_session_creation() {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
@@ -205,7 +234,11 @@ mod tests {
         let mut session = conn.create_session().unwrap();
         session.attach::<test::table>().unwrap();
 
-        sql_query("INSERT INTO test (id, value) VALUES (1, 'hello')")
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("hello"),
+            })
             .execute(&mut conn)
             .unwrap();
 
@@ -225,7 +258,11 @@ mod tests {
         let mut session = conn.create_session().unwrap();
         session.attach::<test::table>().unwrap();
 
-        sql_query("INSERT INTO test (id, value) VALUES (1, 'hello')")
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("hello"),
+            })
             .execute(&mut conn)
             .unwrap();
 
@@ -246,7 +283,11 @@ mod tests {
         // Disable tracking
         session.set_enabled(false);
 
-        sql_query("INSERT INTO test (id, value) VALUES (1, 'hello')")
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("hello"),
+            })
             .execute(&mut conn)
             .unwrap();
 
@@ -256,7 +297,11 @@ mod tests {
         // Re-enable tracking
         session.set_enabled(true);
 
-        sql_query("INSERT INTO test (id, value) VALUES (2, 'world')")
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 2,
+                value: Some("world"),
+            })
             .execute(&mut conn)
             .unwrap();
 
@@ -275,10 +320,17 @@ mod tests {
         let mut session = source.create_session().unwrap();
         session.attach::<users::table>().unwrap();
 
-        sql_query("INSERT INTO users (id, name) VALUES (1, 'Alice')")
-            .execute(&mut source)
-            .unwrap();
-        sql_query("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+        diesel::insert_into(users::table)
+            .values(&[
+                NewUser {
+                    id: 1,
+                    name: Some("Alice"),
+                },
+                NewUser {
+                    id: 2,
+                    name: Some("Bob"),
+                },
+            ])
             .execute(&mut source)
             .unwrap();
 
@@ -295,10 +347,10 @@ mod tests {
             .unwrap();
 
         // Verify data was applied
-        let count: i64 =
-            diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM users")
-                .get_result(&mut replica)
-                .unwrap();
+        let count = users::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap();
         assert_eq!(count, 2);
     }
 
@@ -313,7 +365,11 @@ mod tests {
         let mut session = source.create_session().unwrap();
         session.attach::<items::table>().unwrap();
 
-        sql_query("INSERT INTO items (id, data) VALUES (1, 'item1')")
+        diesel::insert_into(items::table)
+            .values(NewItem {
+                id: 1,
+                data: Some("item1"),
+            })
             .execute(&mut source)
             .unwrap();
 
@@ -329,10 +385,10 @@ mod tests {
             .apply_changeset(&changeset, |_| ConflictAction::Abort)
             .unwrap();
 
-        let count: i64 =
-            diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM items")
-                .get_result(&mut replica)
-                .unwrap();
+        let count = items::table
+            .count()
+            .get_result::<i64>(&mut replica)
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -340,14 +396,18 @@ mod tests {
     fn test_conflict_handling_omit() {
         // Source connection
         let mut source = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut source)
             .unwrap();
 
         let mut session = source.create_session().unwrap();
-        session.attach_by_name("test").unwrap();
+        session.attach::<test::table>().unwrap();
 
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'source')")
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("source"),
+            })
             .execute(&mut source)
             .unwrap();
 
@@ -355,10 +415,15 @@ mod tests {
 
         // Replica with existing conflicting row
         let mut replica = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut replica)
             .unwrap();
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'replica')")
+
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("replica"),
+            })
             .execute(&mut replica)
             .unwrap();
 
@@ -368,25 +433,30 @@ mod tests {
             .unwrap();
 
         // Original value should be preserved
-        let val: String =
-            diesel::dsl::sql::<diesel::sql_types::Text>("SELECT val FROM test WHERE id = 1")
-                .get_result(&mut replica)
-                .unwrap();
-        assert_eq!(val, "replica");
+        let result: Test = test::table
+            .filter(test::id.eq(1))
+            .select(Test::as_select())
+            .first(&mut replica)
+            .unwrap();
+        assert_eq!(result.value.as_deref(), Some("replica"));
     }
 
     #[test]
     fn test_conflict_handling_replace() {
         // Source connection
         let mut source = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut source)
             .unwrap();
 
         let mut session = source.create_session().unwrap();
-        session.attach_by_name("test").unwrap();
+        session.attach::<test::table>().unwrap();
 
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'source')")
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("source"),
+            })
             .execute(&mut source)
             .unwrap();
 
@@ -394,10 +464,15 @@ mod tests {
 
         // Replica with existing conflicting row
         let mut replica = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut replica)
             .unwrap();
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'replica')")
+
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("replica"),
+            })
             .execute(&mut replica)
             .unwrap();
 
@@ -407,11 +482,12 @@ mod tests {
             .unwrap();
 
         // Value should be replaced
-        let val: String =
-            diesel::dsl::sql::<diesel::sql_types::Text>("SELECT val FROM test WHERE id = 1")
-                .get_result(&mut replica)
-                .unwrap();
-        assert_eq!(val, "source");
+        let result: Test = test::table
+            .filter(test::id.eq(1))
+            .select(Test::as_select())
+            .first(&mut replica)
+            .unwrap();
+        assert_eq!(result.value.as_deref(), Some("source"));
     }
 
     #[test]
@@ -427,17 +503,23 @@ mod tests {
     #[test]
     fn test_update_tracking() {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut conn)
             .unwrap();
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'original')")
+
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("original"),
+            })
             .execute(&mut conn)
             .unwrap();
 
         let mut session = conn.create_session().unwrap();
-        session.attach_by_name("test").unwrap();
+        session.attach::<test::table>().unwrap();
 
-        sql_query("UPDATE test SET val = 'updated' WHERE id = 1")
+        diesel::update(test::table.filter(test::id.eq(1)))
+            .set(test::value.eq("updated"))
             .execute(&mut conn)
             .unwrap();
 
@@ -448,10 +530,15 @@ mod tests {
 
         // Apply to replica with original state
         let mut replica = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut replica)
             .unwrap();
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'original')")
+
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("original"),
+            })
             .execute(&mut replica)
             .unwrap();
 
@@ -459,27 +546,33 @@ mod tests {
             .apply_patchset(&patchset, |_| ConflictAction::Abort)
             .unwrap();
 
-        let val: String =
-            diesel::dsl::sql::<diesel::sql_types::Text>("SELECT val FROM test WHERE id = 1")
-                .get_result(&mut replica)
-                .unwrap();
-        assert_eq!(val, "updated");
+        let result: Test = test::table
+            .filter(test::id.eq(1))
+            .select(Test::as_select())
+            .first(&mut replica)
+            .unwrap();
+        assert_eq!(result.value.as_deref(), Some("updated"));
     }
 
     #[test]
     fn test_delete_tracking() {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut conn)
             .unwrap();
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'to_delete')")
+
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("to_delete"),
+            })
             .execute(&mut conn)
             .unwrap();
 
         let mut session = conn.create_session().unwrap();
-        session.attach_by_name("test").unwrap();
+        session.attach::<test::table>().unwrap();
 
-        sql_query("DELETE FROM test WHERE id = 1")
+        diesel::delete(test::table.filter(test::id.eq(1)))
             .execute(&mut conn)
             .unwrap();
 
@@ -489,10 +582,15 @@ mod tests {
 
         // Apply to replica with the row
         let mut replica = SqliteConnection::establish(":memory:").unwrap();
-        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, val TEXT)")
+        sql_query("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
             .execute(&mut replica)
             .unwrap();
-        sql_query("INSERT INTO test (id, val) VALUES (1, 'to_delete')")
+
+        diesel::insert_into(test::table)
+            .values(NewTest {
+                id: 1,
+                value: Some("to_delete"),
+            })
             .execute(&mut replica)
             .unwrap();
 
@@ -500,9 +598,7 @@ mod tests {
             .apply_patchset(&patchset, |_| ConflictAction::Abort)
             .unwrap();
 
-        let count: i64 = diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM test")
-            .get_result(&mut replica)
-            .unwrap();
+        let count = test::table.count().get_result::<i64>(&mut replica).unwrap();
         assert_eq!(count, 0);
     }
 }

@@ -19,7 +19,6 @@ diesel::table! {
     }
 }
 
-
 /// Helper to create an in-memory connection.
 fn create_connection() -> SqliteConnection {
     SqliteConnection::establish(":memory:").expect("Failed to create in-memory connection")
@@ -41,7 +40,6 @@ fn count_rows(conn: &mut SqliteConnection) -> i64 {
 
 #[wasm_bindgen_test]
 async fn test_session_creation_wasm() {
-
     let mut conn = create_connection();
     let session = conn.create_session();
     assert!(session.is_ok(), "Session creation should succeed");
@@ -49,7 +47,6 @@ async fn test_session_creation_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_attach_table_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
 
@@ -60,7 +57,6 @@ async fn test_attach_table_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_attach_table_by_name_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
 
@@ -71,7 +67,6 @@ async fn test_attach_table_by_name_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_attach_all_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
 
@@ -82,7 +77,6 @@ async fn test_attach_all_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_changeset_generation_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
 
@@ -101,7 +95,6 @@ async fn test_changeset_generation_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_patchset_generation_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
 
@@ -118,7 +111,6 @@ async fn test_patchset_generation_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_apply_patchset_wasm() {
-
     // Source connection
     let mut source = create_connection();
     setup_table(&mut source);
@@ -148,7 +140,6 @@ async fn test_apply_patchset_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_apply_changeset_wasm() {
-
     let mut source = create_connection();
     setup_table(&mut source);
 
@@ -173,7 +164,6 @@ async fn test_apply_changeset_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_conflict_replace_wasm() {
-
     let mut source = create_connection();
     setup_table(&mut source);
 
@@ -206,7 +196,6 @@ async fn test_conflict_replace_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_conflict_omit_wasm() {
-
     let mut source = create_connection();
     setup_table(&mut source);
 
@@ -239,7 +228,6 @@ async fn test_conflict_omit_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_update_tracking_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
     sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'original', 10)")
@@ -276,7 +264,6 @@ async fn test_update_tracking_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_delete_tracking_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
     sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'to_delete', 1)")
@@ -307,7 +294,6 @@ async fn test_delete_tracking_wasm() {
 
 #[wasm_bindgen_test]
 async fn test_enable_disable_wasm() {
-
     let mut conn = create_connection();
     setup_table(&mut conn);
 

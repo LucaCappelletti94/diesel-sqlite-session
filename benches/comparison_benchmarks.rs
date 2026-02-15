@@ -6,7 +6,6 @@
 //! Run with: cargo bench --bench comparison_benchmarks
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use diesel::RunQueryDsl;
 use std::hint::black_box;
 use std::time::Duration;
 
@@ -16,7 +15,6 @@ use std::time::Duration;
 mod diesel_impl {
     use diesel::prelude::*;
     use diesel::sql_query;
-    use diesel::RunQueryDsl;
     use diesel_sqlite_session::{ConflictAction, Session, SqliteSessionExt};
 
     diesel::table! {
@@ -25,6 +23,14 @@ mod diesel_impl {
             name -> Nullable<Text>,
             value -> Nullable<Integer>,
         }
+    }
+
+    #[derive(Insertable)]
+    #[diesel(table_name = items)]
+    struct NewItem {
+        id: i32,
+        name: String,
+        value: i32,
     }
 
     pub fn setup_connection() -> SqliteConnection {
@@ -44,30 +50,34 @@ mod diesel_impl {
     }
 
     pub fn insert_rows(conn: &mut SqliteConnection, count: i32) {
-        for i in 0..count {
-            sql_query(format!(
-                "INSERT INTO items (id, name, value) VALUES ({i}, 'item{i}', {i})"
-            ))
-            .execute(conn)
-            .unwrap();
+        insert_rows_range(conn, 0, count);
+    }
+
+    pub fn insert_rows_range(conn: &mut SqliteConnection, start: i32, end: i32) {
+        for i in start..end {
+            diesel::insert_into(items::table)
+                .values(NewItem {
+                    id: i,
+                    name: format!("item{i}"),
+                    value: i,
+                })
+                .execute(conn)
+                .unwrap();
         }
     }
 
     pub fn update_rows(conn: &mut SqliteConnection, count: i32) {
         for i in 0..count {
-            sql_query(format!(
-                "UPDATE items SET value = {} WHERE id = {}",
-                i * 2,
-                i
-            ))
-            .execute(conn)
-            .unwrap();
+            diesel::update(items::table.filter(items::id.eq(i)))
+                .set(items::value.eq(i * 2))
+                .execute(conn)
+                .unwrap();
         }
     }
 
     pub fn delete_rows(conn: &mut SqliteConnection, start: i32, end: i32) {
         for i in start..end {
-            sql_query(format!("DELETE FROM items WHERE id = {i}"))
+            diesel::delete(items::table.filter(items::id.eq(i)))
                 .execute(conn)
                 .unwrap();
         }
@@ -114,7 +124,11 @@ mod rusqlite_impl {
     }
 
     pub fn insert_rows(conn: &Connection, count: i32) {
-        for i in 0..count {
+        insert_rows_range(conn, 0, count);
+    }
+
+    pub fn insert_rows_range(conn: &Connection, start: i32, end: i32) {
+        for i in start..end {
             conn.execute(
                 "INSERT INTO items (id, name, value) VALUES (?1, ?2, ?3)",
                 rusqlite::params![i, format!("item{i}"), i],
@@ -443,14 +457,8 @@ fn bench_mixed_operations(c: &mut Criterion) {
             let mut session = diesel_impl::create_session(&mut conn);
             diesel_impl::attach_table(&mut session);
 
-            // 25 inserts
-            for i in 50..75 {
-                diesel::sql_query(format!(
-                    "INSERT INTO items (id, name, value) VALUES ({i}, 'new{i}', {i})"
-                ))
-                .execute(&mut conn)
-                .unwrap();
-            }
+            // 25 inserts (ids 50-74)
+            diesel_impl::insert_rows_range(&mut conn, 50, 75);
 
             // 25 updates
             diesel_impl::update_rows(&mut conn, 25);
@@ -471,14 +479,8 @@ fn bench_mixed_operations(c: &mut Criterion) {
             let mut session = rusqlite::session::Session::new(&conn).unwrap();
             session.attach(Some("items")).unwrap();
 
-            // 25 inserts
-            for i in 50..75 {
-                conn.execute(
-                    "INSERT INTO items (id, name, value) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![i, format!("new{i}"), i],
-                )
-                .unwrap();
-            }
+            // 25 inserts (ids 50-74)
+            rusqlite_impl::insert_rows_range(&conn, 50, 75);
 
             // 25 updates
             rusqlite_impl::update_rows(&conn, 25);

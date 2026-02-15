@@ -5,7 +5,7 @@ use std::ptr;
 
 use diesel::SqliteConnection;
 
-use crate::errors::{ApplyError, ConflictAction, ConflictType};
+use crate::errors::{ApplyError, ConflictAction, ConflictType, SqliteErrorCode};
 use crate::ffi::{
     sqlite3_changeset_iter, sqlite3changeset_apply, SQLITE_CHANGESET_ABORT, SQLITE_OK,
 };
@@ -31,14 +31,14 @@ where
 {
     let ctx = unsafe { &mut *context.cast::<ConflictContext<F>>() };
 
-    let conflict = ConflictType::from_sqlite(conflict_type).unwrap_or(ConflictType::Constraint);
+    let conflict = ConflictType::from_raw(conflict_type).unwrap_or(ConflictType::Constraint);
     let action = (ctx.handler)(conflict);
 
     if action == ConflictAction::Abort {
         ctx.aborted = true;
     }
 
-    action.to_sqlite()
+    action.to_raw()
 }
 
 /// Apply a changeset to a Diesel connection.
@@ -107,13 +107,11 @@ where
     };
 
     if context.aborted {
-        return Err(ApplyError::ConflictAborted(
-            "Conflict handler returned Abort".to_string(),
-        ));
+        return Err(ApplyError::ConflictAborted);
     }
 
     if rc != SQLITE_OK && rc != SQLITE_CHANGESET_ABORT {
-        return Err(ApplyError::ApplyFailed(rc));
+        return Err(ApplyError::ApplyFailed(SqliteErrorCode::from_error(rc)));
     }
 
     Ok(())

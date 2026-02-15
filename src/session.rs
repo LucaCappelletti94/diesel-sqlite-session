@@ -6,7 +6,7 @@ use std::ptr;
 use diesel::internal::table_macro::{Identifier, StaticQueryFragment};
 use diesel::SqliteConnection;
 
-use crate::errors::SessionError;
+use crate::errors::{SessionError, SqliteErrorCode};
 use crate::ffi::{
     sqlite3_free, sqlite3_session, sqlite3session_attach, sqlite3session_changeset,
     sqlite3session_create, sqlite3session_delete, sqlite3session_enable, sqlite3session_isempty,
@@ -83,7 +83,7 @@ impl Session {
                 let mut session: *mut sqlite3_session = ptr::null_mut();
                 let rc = sqlite3session_create(raw, db_name.as_ptr(), &mut session);
                 if rc != SQLITE_OK {
-                    return Err(SessionError::CreateFailed(rc));
+                    return Err(SessionError::CreateFailed(SqliteErrorCode::from_error(rc)));
                 }
                 Ok(session)
             })
@@ -136,7 +136,7 @@ impl Session {
         let rc = unsafe { sqlite3session_attach(self.session, ptr::null()) };
 
         if rc != SQLITE_OK {
-            return Err(SessionError::AttachFailed(rc));
+            return Err(SessionError::AttachFailed(SqliteErrorCode::from_error(rc)));
         }
 
         Ok(())
@@ -156,7 +156,7 @@ impl Session {
         let rc = unsafe { sqlite3session_attach(self.session, c_name.as_ptr()) };
 
         if rc != SQLITE_OK {
-            return Err(SessionError::AttachFailed(rc));
+            return Err(SessionError::AttachFailed(SqliteErrorCode::from_error(rc)));
         }
 
         Ok(())
@@ -178,7 +178,9 @@ impl Session {
         let rc = unsafe { sqlite3session_changeset(self.session, &mut size, &mut buffer) };
 
         if rc != SQLITE_OK {
-            return Err(SessionError::ChangesetFailed(rc));
+            return Err(SessionError::ChangesetFailed(SqliteErrorCode::from_error(
+                rc,
+            )));
         }
 
         let result = if size > 0 && !buffer.is_null() {
@@ -212,7 +214,9 @@ impl Session {
         let rc = unsafe { sqlite3session_patchset(self.session, &mut size, &mut buffer) };
 
         if rc != SQLITE_OK {
-            return Err(SessionError::PatchsetFailed(rc));
+            return Err(SessionError::PatchsetFailed(SqliteErrorCode::from_error(
+                rc,
+            )));
         }
 
         let result = if size > 0 && !buffer.is_null() {

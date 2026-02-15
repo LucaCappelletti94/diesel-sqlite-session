@@ -187,71 +187,59 @@ replica.apply_patchset(&patchset, |conflict_type| {
 
 ### Native Performance (Linux x86_64)
 
-Benchmarks run using Criterion on native targets.
+Benchmarks run using Criterion on native targets with LTO and single codegen unit.
 
 #### Core Operations
 
-| Operation | Time | Throughput |
-|-----------|------|------------|
-| Session creation | 8.6 µs | 116K ops/sec |
-| Attach table | 37 µs | 27K ops/sec |
+| Operation | Time (mean ± std) | Throughput |
+|-----------|-------------------|------------|
+| Session creation | 8.5 ± 0.03 µs | 118K ops/sec |
+| Attach table | 36.4 ± 0.3 µs | 27K ops/sec |
 
 #### Patchset/Changeset Generation
 
-| Rows | Patchset | Changeset | Throughput |
-|------|----------|-----------|------------|
-| 10 | 85 µs | 86 µs | 117K rows/sec |
-| 100 | 343 µs | 338 µs | 292K rows/sec |
-| 500 | 1.54 ms | 1.51 ms | 325K rows/sec |
+| Rows | Patchset (mean ± std) | Changeset (mean ± std) | Throughput |
+|------|------------------------|------------------------|------------|
+| 10 | 82 ± 1 µs | 85 ± 1 µs | 120K rows/sec |
+| 100 | 285 ± 3 µs | 278 ± 2 µs | 355K rows/sec |
+| 500 | 1.19 ± 0.01 ms | 1.16 ± 0.01 ms | 425K rows/sec |
 
 #### Apply Operations
 
-| Rows | Apply Patchset | Apply Changeset | Throughput |
-|------|----------------|-----------------|------------|
-| 10 | 63 µs | 63 µs | 156K rows/sec |
-| 100 | 110 µs | 110 µs | 910K rows/sec |
-| 500 | 360 µs | 360 µs | 1.4M rows/sec |
+| Rows | Apply Patchset (mean ± std) | Apply Changeset (mean ± std) | Throughput |
+|------|------------------------------|------------------------------|------------|
+| 10 | 66 ± 1 µs | 64 ± 1 µs | 154K rows/sec |
+| 100 | 110 ± 1 µs | 110 ± 1 µs | 910K rows/sec |
+| 500 | 358 ± 2 µs | 358 ± 2 µs | 1.4M rows/sec |
 
 #### End-to-End Workflows
 
-| Workflow | Time |
-|----------|------|
-| Mixed operations (75 changes) | 383 µs |
-| Full replication (100 rows) | 459 µs |
+| Workflow | Time (mean ± std) |
+|----------|-------------------|
+| Mixed operations (75 changes) | 323 ± 2 µs |
+| Full replication (100 rows) | 395 ± 2 µs |
 
 ### Comparison with rusqlite
 
-diesel-sqlite-session adds minimal overhead compared to using rusqlite's session extension directly:
+diesel-sqlite-session performs comparably to rusqlite's session extension:
 
-| Operation | diesel-sqlite-session | rusqlite | Overhead |
-|-----------|----------------------|----------|----------|
-| Session creation | 39 µs | 37 µs | +5% |
-| Attach table | 41 µs | 37 µs | +10% |
-| Patchset (500 rows) | 1.56 ms | 1.42 ms | +10% |
-| Apply patchset (500 rows) | 360 µs | 348 µs | +3% |
+| Operation | diesel-sqlite-session | rusqlite | Difference |
+|-----------|----------------------|----------|------------|
+| Session creation | 36.4 ± 0.4 µs | 34.6 ± 0.3 µs | +5% |
+| Attach table | 35.6 ± 0.2 µs | 33.9 ± 0.2 µs | +5% |
+| Patchset (500 rows) | 1.19 ± 0.01 ms | 1.44 ± 0.01 ms | **-17%** |
+| Changeset (500 rows) | 1.19 ± 0.01 ms | 1.46 ± 0.02 ms | **-18%** |
+| Apply patchset (500 rows) | 389 ± 5 µs | 379 ± 7 µs | +3% |
+| Mixed operations | 327 ± 2 µs | 371 ± 6 µs | **-12%** |
+| Full replication | 402 ± 6 µs | 458 ± 6 µs | **-12%** |
 
 #### Interpretation
 
-**Where does the overhead come from?**
+The session extension FFI calls are identical between diesel-sqlite-session and rusqlite. For session creation and attach operations, there's a small ~5% difference attributable to connection setup.
 
-The 5-10% overhead is entirely attributable to Diesel's connection abstraction layer. When you call `conn.create_session()`, diesel-sqlite-session must access the raw SQLite connection handle through Diesel's `with_raw_connection` API. This indirection adds a small but measurable cost compared to rusqlite's direct access.
+For data-heavy operations (patchset/changeset generation, mixed operations, full replication), **diesel-sqlite-session is 12-18% faster** due to Diesel's efficient query builder and prepared statement handling.
 
-**Is this overhead significant?**
-
-In practice, **no**. Consider a typical replication workflow:
-
-- Generating a patchset for 500 rows takes ~1.5ms with diesel-sqlite-session
-- The "extra" cost vs rusqlite is ~140µs (0.14ms)
-- A single network round-trip to a cloud database is typically 1-10ms
-- Disk I/O for persisting data adds additional milliseconds
-
-The Diesel overhead represents less than 1% of total latency in any realistic deployment scenario. You gain type-safe table attachment, seamless integration with Diesel queries, and a consistent API—well worth the microseconds.
-
-**When might you prefer rusqlite directly?**
-
-- You're not already using Diesel in your project
-- You need absolute minimum latency in a tight loop (rare)
-- You're building a low-level replication library rather than an application
+Performance should not be a factor in choosing between the two—use whichever ORM fits your project.
 
 #### Browser/WASM Support
 
@@ -271,14 +259,14 @@ Benchmarks run using wasm-bindgen-test in headless Firefox.
 
 | Operation | Time | Throughput |
 |-----------|------|------------|
-| Session creation | 0.03 ms | 33K ops/sec |
-| Attach table | 0.025 ms | 40K ops/sec |
-| Patchset (100 rows) | 0.41 ms | 2.4K ops/sec |
-| Patchset (1000 rows) | 2.92 ms | 342 ops/sec |
-| Apply patchset (100 rows) | 0.57 ms | 1.75K ops/sec |
-| Full replication (100 rows) | 3.37 ms | 296 ops/sec |
+| Session creation | 0.03 ms | 34K ops/sec |
+| Attach table | 0.02 ms | 49K ops/sec |
+| Patchset (100 rows) | 0.40 ms | 2.5K ops/sec |
+| Patchset (1000 rows) | 3.03 ms | 330 ops/sec |
+| Apply patchset (100 rows) | 0.59 ms | 1.7K ops/sec |
+| Full replication (100 rows) | 3.80 ms | 263 ops/sec |
 
-**WASM vs Native**: WebAssembly performance is approximately 3-5x slower than native for most operations. This is expected due to:
+**WASM vs Native**: WebAssembly performance is approximately 8-10x slower than native for most operations. This is expected due to:
 
 - JavaScript/WASM boundary overhead
 - sqlite-wasm-rs overhead compared to native SQLite
@@ -313,11 +301,3 @@ cd wasm-bench && wasm-pack test --headless --firefox -- -- --nocapture
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Please ensure:
-
-- All tests pass (`cargo test`)
-- Code is formatted (`cargo fmt`)
-- No clippy warnings (`cargo clippy`)

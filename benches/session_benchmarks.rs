@@ -17,6 +17,14 @@ diesel::table! {
     }
 }
 
+#[derive(Insertable)]
+#[diesel(table_name = items)]
+struct NewItem {
+    id: i32,
+    name: String,
+    value: i32,
+}
+
 /// Setup a connection with a test table.
 fn setup_connection() -> SqliteConnection {
     let mut conn = SqliteConnection::establish(":memory:").unwrap();
@@ -24,6 +32,39 @@ fn setup_connection() -> SqliteConnection {
         .execute(&mut conn)
         .unwrap();
     conn
+}
+
+/// Insert rows using ORM DSL.
+fn insert_rows(conn: &mut SqliteConnection, start: i32, end: i32) {
+    for i in start..end {
+        diesel::insert_into(items::table)
+            .values(NewItem {
+                id: i,
+                name: format!("item{i}"),
+                value: i,
+            })
+            .execute(conn)
+            .unwrap();
+    }
+}
+
+/// Update rows using ORM DSL.
+fn update_rows(conn: &mut SqliteConnection, count: i32) {
+    for i in 0..count {
+        diesel::update(items::table.filter(items::id.eq(i)))
+            .set(items::value.eq(i * 2))
+            .execute(conn)
+            .unwrap();
+    }
+}
+
+/// Delete rows using ORM DSL.
+fn delete_rows(conn: &mut SqliteConnection, start: i32, end: i32) {
+    for i in start..end {
+        diesel::delete(items::table.filter(items::id.eq(i)))
+            .execute(conn)
+            .unwrap();
+    }
 }
 
 /// Benchmark session creation.
@@ -64,13 +105,8 @@ fn bench_patchset_generation(c: &mut Criterion) {
                     let mut session = conn.create_session().unwrap();
                     session.attach::<items::table>().unwrap();
 
-                    for i in 0..count {
-                        sql_query(format!(
-                            "INSERT INTO items (id, name, value) VALUES ({i}, 'item{i}', {i})"
-                        ))
-                        .execute(&mut conn)
-                        .unwrap();
-                    }
+                    insert_rows(&mut conn, 0, count);
+
                     let patchset = session.patchset().unwrap();
                     black_box(patchset);
                 });
@@ -95,13 +131,8 @@ fn bench_changeset_generation(c: &mut Criterion) {
                     let mut session = conn.create_session().unwrap();
                     session.attach::<items::table>().unwrap();
 
-                    for i in 0..count {
-                        sql_query(format!(
-                            "INSERT INTO items (id, name, value) VALUES ({i}, 'item{i}', {i})"
-                        ))
-                        .execute(&mut conn)
-                        .unwrap();
-                    }
+                    insert_rows(&mut conn, 0, count);
+
                     let changeset = session.changeset().unwrap();
                     black_box(changeset);
                 });
@@ -122,13 +153,8 @@ fn bench_apply_patchset(c: &mut Criterion) {
             let mut session = conn.create_session().unwrap();
             session.attach::<items::table>().unwrap();
 
-            for i in 0..*row_count {
-                sql_query(format!(
-                    "INSERT INTO items (id, name, value) VALUES ({i}, 'item{i}', {i})"
-                ))
-                .execute(&mut conn)
-                .unwrap();
-            }
+            insert_rows(&mut conn, 0, *row_count);
+
             session.patchset().unwrap()
         };
 
@@ -154,43 +180,19 @@ fn bench_mixed_operations(c: &mut Criterion) {
         b.iter(|| {
             let mut conn = setup_connection();
             // Pre-populate with 50 rows
-            for i in 0..50 {
-                sql_query(format!(
-                    "INSERT INTO items (id, name, value) VALUES ({i}, 'item{i}', {i})"
-                ))
-                .execute(&mut conn)
-                .unwrap();
-            }
+            insert_rows(&mut conn, 0, 50);
 
             let mut session = conn.create_session().unwrap();
             session.attach::<items::table>().unwrap();
 
             // 25 inserts
-            for i in 50..75 {
-                sql_query(format!(
-                    "INSERT INTO items (id, name, value) VALUES ({i}, 'new{i}', {i})"
-                ))
-                .execute(&mut conn)
-                .unwrap();
-            }
+            insert_rows(&mut conn, 50, 75);
 
             // 25 updates
-            for i in 0..25 {
-                sql_query(format!(
-                    "UPDATE items SET value = {} WHERE id = {}",
-                    i * 2,
-                    i
-                ))
-                .execute(&mut conn)
-                .unwrap();
-            }
+            update_rows(&mut conn, 25);
 
             // 25 deletes
-            for i in 25..50 {
-                sql_query(format!("DELETE FROM items WHERE id = {i}"))
-                    .execute(&mut conn)
-                    .unwrap();
-            }
+            delete_rows(&mut conn, 25, 50);
 
             let patchset = session.patchset().unwrap();
             black_box(patchset);
@@ -207,13 +209,7 @@ fn bench_full_replication(c: &mut Criterion) {
             let mut session = source.create_session().unwrap();
             session.attach::<items::table>().unwrap();
 
-            for i in 0..100 {
-                sql_query(format!(
-                    "INSERT INTO items (id, name, value) VALUES ({i}, 'item{i}', {i})"
-                ))
-                .execute(&mut source)
-                .unwrap();
-            }
+            insert_rows(&mut source, 0, 100);
 
             let patchset = session.patchset().unwrap();
 
