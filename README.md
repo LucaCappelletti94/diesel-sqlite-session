@@ -1,5 +1,9 @@
 # diesel-sqlite-session
 
+[![CI](https://github.com/LucaCappelletti94/diesel-sqlite-session/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappelletti94/diesel-sqlite-session/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/LucaCappelletti94/diesel-sqlite-session/graph/badge.svg)](https://codecov.io/gh/LucaCappelletti94/diesel-sqlite-session)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 `SQLite` session extension support for Diesel ORM.
 
 This crate provides `SQLite` [session extension](https://sqlite.org/sessionintro.html) support for Diesel, enabling tracking of database changes and generation of transferable changesets/patchsets for replication, sync, and audit purposes.
