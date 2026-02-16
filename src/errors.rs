@@ -205,3 +205,221 @@ impl ConflictAction {
         self as i32
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod sqlite_error_code {
+        use super::*;
+
+        #[test]
+        fn from_raw_returns_none_for_ok() {
+            assert_eq!(SqliteErrorCode::from_raw(0), None);
+        }
+
+        #[test]
+        fn from_raw_maps_known_codes() {
+            assert_eq!(SqliteErrorCode::from_raw(1), Some(SqliteErrorCode::Error));
+            assert_eq!(
+                SqliteErrorCode::from_raw(2),
+                Some(SqliteErrorCode::Internal)
+            );
+            assert_eq!(
+                SqliteErrorCode::from_raw(3),
+                Some(SqliteErrorCode::Permission)
+            );
+            assert_eq!(SqliteErrorCode::from_raw(5), Some(SqliteErrorCode::Busy));
+            assert_eq!(SqliteErrorCode::from_raw(6), Some(SqliteErrorCode::Locked));
+            assert_eq!(
+                SqliteErrorCode::from_raw(7),
+                Some(SqliteErrorCode::NoMemory)
+            );
+            assert_eq!(
+                SqliteErrorCode::from_raw(8),
+                Some(SqliteErrorCode::ReadOnly)
+            );
+            assert_eq!(SqliteErrorCode::from_raw(17), Some(SqliteErrorCode::Schema));
+            assert_eq!(SqliteErrorCode::from_raw(21), Some(SqliteErrorCode::Misuse));
+        }
+
+        #[test]
+        fn from_raw_maps_unknown_codes() {
+            assert_eq!(
+                SqliteErrorCode::from_raw(99),
+                Some(SqliteErrorCode::Unknown(99))
+            );
+            assert_eq!(
+                SqliteErrorCode::from_raw(-1),
+                Some(SqliteErrorCode::Unknown(-1))
+            );
+        }
+
+        #[test]
+        fn from_error_maps_known_codes() {
+            assert_eq!(SqliteErrorCode::from_error(1), SqliteErrorCode::Error);
+            assert_eq!(SqliteErrorCode::from_error(2), SqliteErrorCode::Internal);
+            assert_eq!(SqliteErrorCode::from_error(3), SqliteErrorCode::Permission);
+            assert_eq!(SqliteErrorCode::from_error(5), SqliteErrorCode::Busy);
+            assert_eq!(SqliteErrorCode::from_error(6), SqliteErrorCode::Locked);
+            assert_eq!(SqliteErrorCode::from_error(7), SqliteErrorCode::NoMemory);
+            assert_eq!(SqliteErrorCode::from_error(8), SqliteErrorCode::ReadOnly);
+            assert_eq!(SqliteErrorCode::from_error(17), SqliteErrorCode::Schema);
+            assert_eq!(SqliteErrorCode::from_error(21), SqliteErrorCode::Misuse);
+        }
+
+        #[test]
+        fn from_error_maps_unknown_codes() {
+            assert_eq!(SqliteErrorCode::from_error(0), SqliteErrorCode::Unknown(0));
+            assert_eq!(
+                SqliteErrorCode::from_error(99),
+                SqliteErrorCode::Unknown(99)
+            );
+        }
+
+        #[test]
+        fn to_raw_roundtrips() {
+            assert_eq!(SqliteErrorCode::Error.to_raw(), 1);
+            assert_eq!(SqliteErrorCode::Internal.to_raw(), 2);
+            assert_eq!(SqliteErrorCode::Permission.to_raw(), 3);
+            assert_eq!(SqliteErrorCode::Busy.to_raw(), 5);
+            assert_eq!(SqliteErrorCode::Locked.to_raw(), 6);
+            assert_eq!(SqliteErrorCode::NoMemory.to_raw(), 7);
+            assert_eq!(SqliteErrorCode::ReadOnly.to_raw(), 8);
+            assert_eq!(SqliteErrorCode::Schema.to_raw(), 17);
+            assert_eq!(SqliteErrorCode::Misuse.to_raw(), 21);
+            assert_eq!(SqliteErrorCode::Unknown(42).to_raw(), 42);
+        }
+
+        #[test]
+        fn display_formats_correctly() {
+            assert_eq!(SqliteErrorCode::Error.to_string(), "SQLITE_ERROR (1)");
+            assert_eq!(SqliteErrorCode::Internal.to_string(), "SQLITE_INTERNAL (2)");
+            assert_eq!(SqliteErrorCode::Permission.to_string(), "SQLITE_PERM (3)");
+            assert_eq!(SqliteErrorCode::Busy.to_string(), "SQLITE_BUSY (5)");
+            assert_eq!(SqliteErrorCode::Locked.to_string(), "SQLITE_LOCKED (6)");
+            assert_eq!(SqliteErrorCode::NoMemory.to_string(), "SQLITE_NOMEM (7)");
+            assert_eq!(SqliteErrorCode::ReadOnly.to_string(), "SQLITE_READONLY (8)");
+            assert_eq!(SqliteErrorCode::Schema.to_string(), "SQLITE_SCHEMA (17)");
+            assert_eq!(SqliteErrorCode::Misuse.to_string(), "SQLITE_MISUSE (21)");
+            assert_eq!(
+                SqliteErrorCode::Unknown(99).to_string(),
+                "SQLITE_UNKNOWN (99)"
+            );
+        }
+    }
+
+    mod session_error {
+        use super::*;
+
+        #[test]
+        fn display_create_failed() {
+            let err = SessionError::CreateFailed(SqliteErrorCode::NoMemory);
+            assert_eq!(
+                err.to_string(),
+                "Failed to create session: SQLITE_NOMEM (7)"
+            );
+        }
+
+        #[test]
+        fn display_attach_failed() {
+            let err = SessionError::AttachFailed(SqliteErrorCode::Error);
+            assert_eq!(err.to_string(), "Failed to attach table: SQLITE_ERROR (1)");
+        }
+
+        #[test]
+        fn display_changeset_failed() {
+            let err = SessionError::ChangesetFailed(SqliteErrorCode::Busy);
+            assert_eq!(
+                err.to_string(),
+                "Failed to generate changeset: SQLITE_BUSY (5)"
+            );
+        }
+
+        #[test]
+        fn display_patchset_failed() {
+            let err = SessionError::PatchsetFailed(SqliteErrorCode::Locked);
+            assert_eq!(
+                err.to_string(),
+                "Failed to generate patchset: SQLITE_LOCKED (6)"
+            );
+        }
+
+        #[test]
+        fn display_invalid_table_name() {
+            let err = SessionError::InvalidTableName;
+            assert_eq!(err.to_string(), "Table name contains null byte");
+        }
+
+        #[test]
+        fn is_std_error() {
+            fn assert_error<E: std::error::Error>() {}
+            assert_error::<SessionError>();
+        }
+    }
+
+    mod apply_error {
+        use super::*;
+
+        #[test]
+        fn display_apply_failed() {
+            let err = ApplyError::ApplyFailed(SqliteErrorCode::Schema);
+            assert_eq!(
+                err.to_string(),
+                "Failed to apply changeset: SQLITE_SCHEMA (17)"
+            );
+        }
+
+        #[test]
+        fn display_conflict_aborted() {
+            let err = ApplyError::ConflictAborted;
+            assert_eq!(err.to_string(), "Conflict handler requested abort");
+        }
+
+        #[test]
+        fn is_std_error() {
+            fn assert_error<E: std::error::Error>() {}
+            assert_error::<ApplyError>();
+        }
+    }
+
+    mod conflict_type {
+        use super::*;
+
+        #[test]
+        fn from_raw_maps_known_codes() {
+            assert_eq!(ConflictType::from_raw(1), Some(ConflictType::Data));
+            assert_eq!(ConflictType::from_raw(2), Some(ConflictType::NotFound));
+            assert_eq!(ConflictType::from_raw(3), Some(ConflictType::Conflict));
+            assert_eq!(ConflictType::from_raw(4), Some(ConflictType::Constraint));
+            assert_eq!(ConflictType::from_raw(5), Some(ConflictType::ForeignKey));
+        }
+
+        #[test]
+        fn from_raw_returns_none_for_unknown() {
+            assert_eq!(ConflictType::from_raw(0), None);
+            assert_eq!(ConflictType::from_raw(6), None);
+            assert_eq!(ConflictType::from_raw(-1), None);
+        }
+
+        #[test]
+        fn to_raw_returns_correct_values() {
+            assert_eq!(ConflictType::Data.to_raw(), 1);
+            assert_eq!(ConflictType::NotFound.to_raw(), 2);
+            assert_eq!(ConflictType::Conflict.to_raw(), 3);
+            assert_eq!(ConflictType::Constraint.to_raw(), 4);
+            assert_eq!(ConflictType::ForeignKey.to_raw(), 5);
+        }
+    }
+
+    mod conflict_action {
+        use super::*;
+
+        #[test]
+        fn to_raw_returns_correct_values() {
+            assert_eq!(ConflictAction::Omit.to_raw(), 0);
+            assert_eq!(ConflictAction::Replace.to_raw(), 1);
+            assert_eq!(ConflictAction::Abort.to_raw(), 2);
+        }
+    }
+}
