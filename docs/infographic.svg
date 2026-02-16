@@ -1,0 +1,441 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1120" width="900" height="1120">
+  <defs>
+    <linearGradient id="header-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#1e3a5f"/>
+      <stop offset="100%" style="stop-color:#2d5a87"/>
+    </linearGradient>
+    <!-- Rust logo (official) -->
+    <symbol id="icon-rust" viewBox="0 0 144 144">
+      <path d="m71.05 23.68c-26.06 0-47.27 21.22-47.27 47.27s21.22 47.27 47.27 47.27 47.27-21.22 47.27-47.27-21.22-47.27-47.27-47.27zm-.07 4.2a3.1 3.11 0 0 1 3.02 3.11 3.11 3.11 0 0 1 -6.22 0 3.11 3.11 0 0 1 3.2-3.11zm7.12 5.12a38.27 38.27 0 0 1 26.2 18.66l-3.67 8.28c-.63 1.43.02 3.11 1.44 3.75l7.06 3.13a38.27 38.27 0 0 1 .08 6.64h-3.93c-.39 0-.55.26-.55.64v1.8c0 4.24-2.39 5.17-4.49 5.4-2 .23-4.21-.84-4.49-2.06-1.18-6.63-3.14-8.04-6.24-10.49 3.85-2.44 7.85-6.05 7.85-10.87 0-5.21-3.57-8.49-6-10.1-3.42-2.25-7.2-2.7-8.22-2.7h-40.6a38.27 38.27 0 0 1 21.41-12.08l4.79 5.02c1.08 1.13 2.87 1.18 4 .09zm-44.2 23.02a3.11 3.11 0 0 1 3.02 3.11 3.11 3.11 0 0 1 -6.22 0 3.11 3.11 0 0 1 3.2-3.11zm74.15.14a3.11 3.11 0 0 1 3.02 3.11 3.11 3.11 0 0 1 -6.22 0 3.11 3.11 0 0 1 3.2-3.11zm-68.29.5h5.42v24.44h-10.94a38.27 38.27 0 0 1 -1.24-14.61l6.7-2.98c1.43-.64 2.08-2.31 1.44-3.74zm22.62.26h12.91c.67 0 4.71.77 4.71 3.8 0 2.51-3.1 3.41-5.65 3.41h-11.98zm0 17.56h9.89c.9 0 4.83.26 6.08 5.28.39 1.54 1.26 6.56 1.85 8.17.59 1.8 2.98 5.4 5.53 5.4h16.14a38.27 38.27 0 0 1 -3.54 4.1l-6.57-1.41c-1.53-.33-3.04.65-3.37 2.18l-1.56 7.28a38.27 38.27 0 0 1 -31.91-.15l-1.56-7.28c-.33-1.53-1.83-2.51-3.36-2.18l-6.43 1.38a38.27 38.27 0 0 1 -3.32-3.92h31.27c.35 0 .59-.06.59-.39v-11.06c0-.32-.24-.39-.59-.39h-9.15zm-14.43 25.33a3.11 3.11 0 0 1 3.02 3.11 3.11 3.11 0 0 1 -6.22 0 3.11 3.11 0 0 1 3.2-3.11zm46.05.14a3.11 3.11 0 0 1 3.02 3.11 3.11 3.11 0 0 1 -6.22 0 3.11 3.11 0 0 1 3.2-3.11z"/>
+      <path d="m115.68 70.95a44.63 44.63 0 0 1 -44.63 44.63 44.63 44.63 0 0 1 -44.63-44.63 44.63 44.63 0 0 1 44.63-44.63 44.63 44.63 0 0 1 44.63 44.63zm-.84-4.31 6.96 4.31-6.96 4.31 5.98 5.59-7.66 2.87 4.78 6.65-8.09 1.32 3.4 7.46-8.19-.29 1.88 7.98-7.98-1.88.29 8.19-7.46-3.4-1.32 8.09-6.65-4.78-2.87 7.66-5.59-5.98-4.31 6.96-4.31-6.96-5.59 5.98-2.87-7.66-6.65 4.78-1.32-8.09-7.46 3.4.29-8.19-7.98 1.88 1.88-7.98-8.19.29 3.4-7.46-8.09-1.32 4.78-6.65-7.66-2.87 5.98-5.59-6.96-4.31 6.96-4.31-5.98-5.59 7.66-2.87-4.78-6.65 8.09-1.32-3.4-7.46 8.19.29-1.88-7.98 7.98 1.88-.29-8.19 7.46 3.4 1.32-8.09 6.65 4.78 2.87-7.66 5.59 5.98 4.31-6.96 4.31 6.96 5.59-5.98 2.87 7.66 6.65-4.78 1.32 8.09 7.46-3.4-.29 8.19 7.98-1.88-1.88 7.98 8.19-.29-3.4 7.46 8.09 1.32-4.78 6.65 7.66 2.87z" fill-rule="evenodd" stroke-linecap="round" stroke-linejoin="round" stroke-width="3"/>
+    </symbol>
+    <!-- Database icon -->
+    <symbol id="icon-database" viewBox="0 0 448 512">
+      <path d="M448 80v48c0 44.2-100.3 80-224 80S0 172.2 0 128V80C0 35.8 100.3 0 224 0S448 35.8 448 80zM393.2 214.7c20.8-7.4 39.9-16.9 54.8-28.6V288c0 44.2-100.3 80-224 80S0 332.2 0 288V186.1c14.9 11.8 34 21.2 54.8 28.6C99.7 230.7 159.5 240 224 240s124.3-9.3 169.2-25.3zM0 346.1c14.9 11.8 34 21.2 54.8 28.6C99.7 390.7 159.5 400 224 400s124.3-9.3 169.2-25.3c20.8-7.4 39.9-16.9 54.8-28.6V432c0 44.2-100.3 80-224 80S0 476.2 0 432V346.1z"/>
+    </symbol>
+    <!-- Arrow right -->
+    <symbol id="icon-arrow-right" viewBox="0 0 448 512">
+      <path d="M438.6 278.6c12.5-12.5 12.5-32.8 0-45.3l-160-160c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L338.8 224 32 224c-17.7 0-32 14.3-32 32s14.3 32 32 32l306.7 0L233.4 393.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0l160-160z"/>
+    </symbol>
+    <!-- Check icon -->
+    <symbol id="icon-check" viewBox="0 0 512 512">
+      <path d="M256 512A256 256 0 1 0 256 0a256 256 0 1 0 0 512zM369 209L241 337c-9.4 9.4-24.6 9.4-33.9 0l-64-64c-9.4-9.4-9.4-24.6 0-33.9s24.6-9.4 33.9 0l47 47L335 175c9.4-9.4 24.6-9.4 33.9 0s9.4 24.6 0 33.9z"/>
+    </symbol>
+    <!-- Globe/WASM icon -->
+    <symbol id="icon-globe" viewBox="0 0 512 512">
+      <path d="M352 256c0 22.2-1.2 43.6-3.3 64H163.3c-2.2-20.4-3.3-41.8-3.3-64s1.2-43.6 3.3-64H348.7c2.2 20.4 3.3 41.8 3.3 64zm28.8-64H503.9c5.3 20.5 8.1 41.9 8.1 64s-2.8 43.5-8.1 64H380.8c2.1-20.6 3.2-42 3.2-64s-1.1-43.4-3.2-64zm112.6-32H376.7c-10-63.9-29.8-117.4-55.3-151.6c78.3 20.7 142 77.5 171.9 151.6zm-149.1 0H167.7c6.1-36.4 15.5-68.6 27-94.7c10.5-23.6 22.2-40.7 33.5-51.5C239.4 3.2 248.7 0 256 0s16.6 3.2 27.8 13.8c11.3 10.8 23 27.9 33.5 51.5c11.6 26 20.9 58.2 27 94.7zm-209 0H18.6C48.6 85.9 112.2 29.1 190.6 8.4C165.1 42.6 145.3 96.1 135.3 160zM8.1 192H131.2c-2.1 20.6-3.2 42-3.2 64s1.1 43.4 3.2 64H8.1C2.8 299.5 0 278.1 0 256s2.8-43.5 8.1-64zM194.7 446.6c-11.6-26-20.9-58.2-27-94.6H344.3c-6.1 36.4-15.5 68.6-27 94.6c-10.5 23.6-22.2 40.7-33.5 51.5C272.6 508.8 263.3 512 256 512s-16.6-3.2-27.8-13.8c-11.3-10.8-23-27.9-33.5-51.5zM135.3 352c10 63.9 29.8 117.4 55.3 151.6C112.2 482.9 48.6 426.1 18.6 352H135.3zm358.1 0c-30 74.1-93.6 130.9-171.9 151.6c25.5-34.2 45.2-87.7 55.3-151.6H493.4z"/>
+    </symbol>
+    <!-- Server icon -->
+    <symbol id="icon-server" viewBox="0 0 512 512">
+      <path d="M64 32C28.7 32 0 60.7 0 96v64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V96c0-35.3-28.7-64-64-64H64zm280 72a24 24 0 1 1 0 48 24 24 0 1 1 0-48zm48 24a24 24 0 1 1 48 0 24 24 0 1 1-48 0zM64 288c-35.3 0-64 28.7-64 64v64c0 35.3 28.7 64 64 64H448c35.3 0 64-28.7 64-64V352c0-35.3-28.7-64-64-64H64zm280 72a24 24 0 1 1 0 48 24 24 0 1 1 0-48zm48 24a24 24 0 1 1 48 0 24 24 0 1 1-48 0z"/>
+    </symbol>
+    <!-- Mobile icon -->
+    <symbol id="icon-mobile" viewBox="0 0 384 512">
+      <path d="M80 0C44.7 0 16 28.7 16 64V448c0 35.3 28.7 64 64 64H304c35.3 0 64-28.7 64-64V64c0-35.3-28.7-64-64-64H80zm80 432h64c8.8 0 16 7.2 16 16s-7.2 16-16 16H160c-8.8 0-16-7.2-16-16s7.2-16 16-16z"/>
+    </symbol>
+    <!-- Sync/arrows icon -->
+    <symbol id="icon-sync" viewBox="0 0 512 512">
+      <path d="M105.1 202.6c7.7-21.8 20.2-42.3 37.8-59.8c62.5-62.5 163.8-62.5 226.3 0L386.3 160H352c-17.7 0-32 14.3-32 32s14.3 32 32 32H480c17.7 0 32-14.3 32-32V64c0-17.7-14.3-32-32-32s-32 14.3-32 32v35.2L430.6 83.6c-87.5-87.5-229.3-87.5-316.8 0C73.2 124.1 50.4 167.4 40.1 214.1c-4.2 18.8 7.7 37.6 26.5 41.8s37.6-7.7 41.8-26.5c6.6-30.2 21.5-58.4 44.1-81zM406.9 309.4c-7.7 21.8-20.2 42.3-37.8 59.8c-62.5 62.5-163.8 62.5-226.3 0L125.7 352H160c17.7 0 32-14.3 32-32s-14.3-32-32-32H32c-17.7 0-32 14.3-32 32V448c0 17.7 14.3 32 32 32s32-14.3 32-32V412.8l17.4 17.4c87.5 87.5 229.3 87.5 316.8 0c40.6-40.6 63.4-83.9 73.7-130.6c4.2-18.8-7.7-37.6-26.5-41.8s-37.6 7.7-41.8 26.5c-6.6 30.2-21.5 58.4-44.1 81z"/>
+    </symbol>
+    <!-- PostgreSQL elephant (official Simple Icons) -->
+    <symbol id="icon-postgres" viewBox="0 0 24 24">
+      <path d="M23.5594 14.7228a.5269.5269 0 0 0-.0563-.1191c-.139-.2632-.4768-.3418-1.0074-.2321-1.6533.3411-2.2935.1312-2.5256-.0191 1.342-2.0482 2.445-4.522 3.0411-6.8297.2714-1.0507.7982-3.5237.1222-4.7316a1.5641 1.5641 0 0 0-.1509-.235C21.6931.9086 19.8007.0248 17.5099.0005c-1.4947-.0158-2.7705.3461-3.1161.4794a9.449 9.449 0 0 0-.5159-.0816 8.044 8.044 0 0 0-1.3114-.1278c-1.1822-.0184-2.2038.2642-3.0498.8406-.8573-.3211-4.7888-1.645-7.2219.0788C.9359 2.1526.3086 3.8733.4302 6.3043c.0409.818.5069 3.334 1.2423 5.7436.4598 1.5065.9387 2.7019 1.4334 3.582.553.9942 1.1259 1.5933 1.7143 1.7895.4474.1491 1.1327.1441 1.8581-.7279.8012-.9635 1.5903-1.8258 1.9446-2.2069.4351.2355.9064.3625 1.39.3772a.0569.0569 0 0 0 .0004.0041 11.0312 11.0312 0 0 0-.2472.3054c-.3389.4302-.4094.5197-1.5002.7443-.3102.064-1.1344.2339-1.1464.8115-.0025.1224.0329.2309.0919.3268.2269.4231.9216.6097 1.015.6331 1.3345.3335 2.5044.092 3.3714-.6787-.017 2.231.0775 4.4174.3454 5.0874.2212.5529.7618 1.9045 2.4692 1.9043.2505 0 .5263-.0291.8296-.0941 1.7819-.3821 2.5557-1.1696 2.855-2.9059.1503-.8707.4016-2.8753.5388-4.1012.0169-.0703.0357-.1207.057-.1362.0007-.0005.0697-.0471.4272.0307a.3673.3673 0 0 0 .0443.0068l.2539.0223.0149.001c.8468.0384 1.9114-.1426 2.5312-.4308.6438-.2988 1.8057-1.0323 1.5951-1.6698zM2.371 11.8765c-.7435-2.4358-1.1779-4.8851-1.2123-5.5719-.1086-2.1714.4171-3.6829 1.5623-4.4927 1.8367-1.2986 4.8398-.5408 6.108-.13-.0032.0032-.0066.0061-.0098.0094-2.0238 2.044-1.9758 5.536-1.9708 5.7495-.0002.0823.0066.1989.0162.3593.0348.5873.0996 1.6804-.0735 2.9184-.1609 1.1504.1937 2.2764.9728 3.0892.0806.0841.1648.1631.2518.2374-.3468.3714-1.1004 1.1926-1.9025 2.1576-.5677.6825-.9597.5517-1.0886.5087-.3919-.1307-.813-.5871-1.2381-1.3223-.4796-.839-.9635-2.0317-1.4155-3.5126zm6.0072 5.0871c-.1711-.0428-.3271-.1132-.4322-.1772.0889-.0394.2374-.0902.4833-.1409 1.2833-.2641 1.4815-.4506 1.9143-1.0002.0992-.126.2116-.2687.3673-.4426a.3549.3549 0 0 0 .0737-.1298c.1708-.1513.2724-.1099.4369-.0417.156.0646.3078.26.3695.4752.0291.1016.0619.2945-.0452.4444-.9043 1.2658-2.2216 1.2494-3.1676 1.0128zm2.094-3.988-.0525.141c-.133.3566-.2567.6881-.3334 1.003-.6674-.0021-1.3168-.2872-1.8105-.8024-.6279-.6551-.9131-1.5664-.7825-2.5004.1828-1.3079.1153-2.4468.079-3.0586-.005-.0857-.0095-.1607-.0122-.2199.2957-.2621 1.6659-.9962 2.6429-.7724.4459.1022.7176.4057.8305.928.5846 2.7038.0774 3.8307-.3302 4.7363-.084.1866-.1633.3629-.2311.5454zm7.3637 4.5725c-.0169.1768-.0358.376-.0618.5959l-.146.4383a.3547.3547 0 0 0-.0182.1077c-.0059.4747-.054.6489-.115.8693-.0634.2292-.1353.4891-.1794 1.0575-.11 1.4143-.8782 2.2267-2.4172 2.5565-1.5155.3251-1.7843-.4968-2.0212-1.2217a6.5824 6.5824 0 0 0-.0769-.2266c-.2154-.5858-.1911-1.4119-.1574-2.5551.0165-.5612-.0249-1.9013-.3302-2.6462.0044-.2932.0106-.5909.019-.8918a.3529.3529 0 0 0-.0153-.1126 1.4927 1.4927 0 0 0-.0439-.208c-.1226-.4283-.4213-.7866-.7797-.9351-.1424-.059-.4038-.1672-.7178-.0869.067-.276.1831-.5875.309-.9249l.0529-.142c.0595-.16.134-.3257.213-.5012.4265-.9476 1.0106-2.2453.3766-5.1772-.2374-1.0981-1.0304-1.6343-2.2324-1.5098-.7207.0746-1.3799.3654-1.7088.5321a5.6716 5.6716 0 0 0-.1958.1041c.0918-1.1064.4386-3.1741 1.7357-4.4823a4.0306 4.0306 0 0 1 .3033-.276.3532.3532 0 0 0 .1447-.0644c.7524-.5706 1.6945-.8506 2.802-.8325.4091.0067.8017.0339 1.1742.081 1.939.3544 3.2439 1.4468 4.0359 2.3827.8143.9623 1.2552 1.9315 1.4312 2.4543-1.3232-.1346-2.2234.1268-2.6797.779-.9926 1.4189.543 4.1729 1.2811 5.4964.1353.2426.2522.4522.2889.5413.2403.5825.5515.9713.7787 1.2552.0696.087.1372.1714.1885.245-.4008.1155-1.1208.3825-1.0552 1.717-.0123.1563-.0423.4469-.0834.8148-.0461.2077-.0702.4603-.0994.7662zm.8905-1.6211c-.0405-.8316.2691-.9185.5967-1.0105a2.8566 2.8566 0 0 0 .135-.0406 1.202 1.202 0 0 0 .1342.103c.5703.3765 1.5823.4213 3.0068.1344-.2016.1769-.5189.3994-.9533.6011-.4098.1903-1.0957.333-1.7473.3636-.7197.0336-1.0859-.0807-1.1721-.151zm.5695-9.2712c-.0059.3508-.0542.6692-.1054 1.0017-.055.3576-.112.7274-.1264 1.1762-.0142.4368.0404.8909.0932 1.3301.1066.887.216 1.8003-.2075 2.7014a3.5272 3.5272 0 0 1-.1876-.3856c-.0527-.1276-.1669-.3326-.3251-.6162-.6156-1.1041-2.0574-3.6896-1.3193-4.7446.3795-.5427 1.3408-.5661 2.1781-.463zm.2284 7.0137a12.3762 12.3762 0 0 0-.0853-.1074l-.0355-.0444c.7262-1.1995.5842-2.3862.4578-3.4385-.0519-.4318-.1009-.8396-.0885-1.2226.0129-.4061.0666-.7543.1185-1.0911.0639-.415.1288-.8443.1109-1.3505.0134-.0531.0188-.1158.0118-.1902-.0457-.4855-.5999-1.938-1.7294-3.253-.6076-.7073-1.4896-1.4972-2.6889-2.0395.5251-.1066 1.2328-.2035 2.0244-.1859 2.0515.0456 3.6746.8135 4.8242 2.2824a.908.908 0 0 1 .0667.1002c.7231 1.3556-.2762 6.2751-2.9867 10.5405zm-8.8166-6.1162c-.025.1794-.3089.4225-.6211.4225a.5821.5821 0 0 1-.0809-.0056c-.1873-.026-.3765-.144-.5059-.3156-.0458-.0605-.1203-.178-.1055-.2844.0055-.0401.0261-.0985.0925-.1488.1182-.0894.3518-.1226.6096-.0867.3163.0441.6426.1938.6113.4186zm7.9305-.4114c.0111.0792-.049.201-.1531.3102-.0683.0717-.212.1961-.4079.2232a.5456.5456 0 0 1-.075.0052c-.2935 0-.5414-.2344-.5607-.3717-.024-.1765.2641-.3106.5611-.352.297-.0414.6111.0088.6356.1851z"/>
+    </symbol>
+    <!-- Apache Kafka icon (official) -->
+    <symbol id="icon-kafka" viewBox="0 0 24 24">
+      <path d="M9.71 2.136a1.43 1.43 0 0 0-2.047 0h-.007a1.48 1.48 0 0 0-.421 1.042c0 .41.161.777.422 1.039l.007.007c.257.264.616.426 1.019.426.404 0 .766-.162 1.027-.426l.003-.007c.261-.262.421-.629.421-1.039 0-.408-.159-.777-.421-1.042H9.71zM8.683 22.295c.404 0 .766-.167 1.027-.429l.003-.008c.261-.261.421-.631.421-1.036 0-.41-.159-.778-.421-1.044H9.71a1.42 1.42 0 0 0-1.027-.432 1.4 1.4 0 0 0-1.02.432h-.007c-.26.266-.422.634-.422 1.044 0 .406.161.775.422 1.036l.007.008c.258.262.617.429 1.02.429zm7.89-4.462c.359-.096.683-.33.882-.684l.027-.052a1.47 1.47 0 0 0 .114-1.067 1.454 1.454 0 0 0-.675-.896l-.021-.014a1.425 1.425 0 0 0-1.078-.132c-.36.091-.684.335-.881.686-.2.349-.241.75-.146 1.119.099.363.33.691.675.896h.002c.346.203.737.239 1.101.144zm-6.405-7.342a2.083 2.083 0 0 0-1.485-.627c-.58 0-1.103.242-1.482.627-.378.385-.612.916-.612 1.507s.233 1.124.612 1.514a2.08 2.08 0 0 0 2.967 0c.379-.39.612-.923.612-1.514s-.233-1.122-.612-1.507zm-.835-2.51c.843.141 1.6.552 2.178 1.144h.004c.092.093.182.196.265.299l1.446-.851a3.176 3.176 0 0 1-.047-1.808 3.149 3.149 0 0 1 1.456-1.926l.025-.016a3.062 3.062 0 0 1 2.345-.306c.77.21 1.465.721 1.898 1.482v.002c.431.757.518 1.626.313 2.408a3.145 3.145 0 0 1-1.456 1.928l-.198.118h-.02a3.095 3.095 0 0 1-2.154.201 3.127 3.127 0 0 1-1.514-.944l-1.444.848a4.162 4.162 0 0 1 0 2.879l1.444.846c.413-.47.939-.789 1.514-.944a3.041 3.041 0 0 1 2.371.319l.048.023v.002a3.17 3.17 0 0 1 1.408 1.906 3.215 3.215 0 0 1-.313 2.405l-.026.053-.003-.005a3.147 3.147 0 0 1-1.867 1.436 3.096 3.096 0 0 1-2.371-.318v-.006a3.156 3.156 0 0 1-1.456-1.927 3.175 3.175 0 0 1 .047-1.805l-1.446-.848a3.905 3.905 0 0 1-.265.294l-.004.005a3.938 3.938 0 0 1-2.178 1.138v1.699a3.09 3.09 0 0 1 1.56.862l.002.004c.565.572.914 1.368.914 2.243 0 .873-.35 1.664-.914 2.239l-.002.009a3.1 3.1 0 0 1-2.21.931 3.1 3.1 0 0 1-2.206-.93h-.002v-.009a3.186 3.186 0 0 1-.916-2.239c0-.875.35-1.672.916-2.243v-.004h.002a3.1 3.1 0 0 1 1.558-.862v-1.699a3.926 3.926 0 0 1-2.176-1.138l-.006-.005a4.098 4.098 0 0 1-1.173-2.874c0-1.122.452-2.136 1.173-2.872h.006a3.947 3.947 0 0 1 2.176-1.144V6.289a3.137 3.137 0 0 1-1.558-.864h-.002v-.004a3.192 3.192 0 0 1-.916-2.243c0-.871.35-1.669.916-2.243l.002-.002A3.084 3.084 0 0 1 8.683 0c.861 0 1.641.355 2.21.932v.002h.002c.565.574.914 1.372.914 2.243 0 .876-.35 1.667-.914 2.243l-.002.005a3.142 3.142 0 0 1-1.56.864v1.692zm8.121-1.129l-.012-.019a1.452 1.452 0 0 0-.87-.668 1.43 1.43 0 0 0-1.103.146h.002c-.347.2-.58.529-.677.896-.095.365-.054.768.146 1.119l.007.009c.2.347.519.579.874.673.357.103.755.059 1.098-.144l.019-.009a1.47 1.47 0 0 0 .657-.885 1.493 1.493 0 0 0-.141-1.118"/>
+    </symbol>
+    <!-- Diesel gear icon -->
+    <symbol id="icon-diesel" viewBox="0 0 512 512">
+      <path d="M495.9 166.6c3.2 8.7 .5 18.4-6.4 24.6l-43.3 39.4c1.1 8.3 1.7 16.8 1.7 25.4s-.6 17.1-1.7 25.4l43.3 39.4c6.9 6.2 9.6 15.9 6.4 24.6c-4.4 11.9-9.7 23.3-15.8 34.3l-4.7 8.1c-6.6 11-14 21.4-22.1 31.2c-5.9 7.2-15.7 9.6-24.5 6.8l-55.7-17.7c-13.4 10.3-28.2 18.9-44 25.4l-12.5 57.1c-2 9.1-9 16.3-18.2 17.8c-13.8 2.3-28 3.5-42.5 3.5s-28.7-1.2-42.5-3.5c-9.2-1.5-16.2-8.7-18.2-17.8l-12.5-57.1c-15.8-6.5-30.6-15.1-44-25.4L83.1 425.9c-8.8 2.8-18.6 .3-24.5-6.8c-8.1-9.8-15.5-20.2-22.1-31.2l-4.7-8.1c-6.1-11-11.4-22.4-15.8-34.3c-3.2-8.7-.5-18.4 6.4-24.6l43.3-39.4C64.6 273.1 64 264.6 64 256s.6-17.1 1.7-25.4L22.4 191.2c-6.9-6.2-9.6-15.9-6.4-24.6c4.4-11.9 9.7-23.3 15.8-34.3l4.7-8.1c6.6-11 14-21.4 22.1-31.2c5.9-7.2 15.7-9.6 24.5-6.8l55.7 17.7c13.4-10.3 28.2-18.9 44-25.4l12.5-57.1c2-9.1 9-16.3 18.2-17.8C227.3 1.2 241.5 0 256 0s28.7 1.2 42.5 3.5c9.2 1.5 16.2 8.7 18.2 17.8l12.5 57.1c15.8 6.5 30.6 15.1 44 25.4l55.7-17.7c8.8-2.8 18.6-.3 24.5 6.8c8.1 9.8 15.5 20.2 22.1 31.2l4.7 8.1c6.1 11 11.4 22.4 15.8 34.3zM256 336a80 80 0 1 0 0-160 80 80 0 1 0 0 160z"/>
+    </symbol>
+    <!-- Double arrow (bidirectional) -->
+    <symbol id="icon-arrows-lr" viewBox="0 0 512 512">
+      <path d="M406.6 374.6l96-96c12.5-12.5 12.5-32.8 0-45.3l-96-96c-12.5-12.5-32.8-12.5-45.3 0s-12.5 32.8 0 45.3L402.7 224l-293.5 0 41.4-41.4c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-96 96c-12.5 12.5-12.5 32.8 0 45.3l96 96c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 288l293.5 0-41.4 41.4c-12.5 12.5-12.5 32.8 0 45.3s32.8 12.5 45.3 0z"/>
+    </symbol>
+    <!-- Speed/bolt icon -->
+    <symbol id="icon-bolt" viewBox="0 0 448 512">
+      <path d="M349.4 44.6c5.9-13.7 1.5-29.7-10.6-38.5s-28.6-8-39.9 1.8l-256 224c-10 8.8-13.6 22.9-8.9 35.3S50.7 288 64 288H175.5L98.6 467.4c-5.9 13.7-1.5 29.7 10.6 38.5s28.6 8 39.9-1.8l256-224c10-8.8 13.6-22.9 8.9-35.3s-16.6-20.7-30-20.7H272.5L349.4 44.6z"/>
+    </symbol>
+    <!-- MySQL icon (Simple Icons) -->
+    <symbol id="icon-mysql" viewBox="0 0 24 24">
+      <path d="M16.405 5.501c-.115 0-.193.014-.274.033v.013h.014c.054.104.146.18.214.273.054.107.1.214.154.32l.014-.015c.094-.066.14-.172.14-.333-.04-.047-.046-.094-.08-.14-.04-.067-.126-.1-.18-.153zM5.77 18.695h-.927a50.854 50.854 0 00-.27-4.41h-.008l-1.41 4.41H2.45l-1.4-4.41h-.01a72.892 72.892 0 00-.195 4.41H0c.055-1.966.192-3.81.41-5.53h1.15l1.335 4.064h.008l1.347-4.064h1.095c.242 2.015.384 3.86.428 5.53zm4.017-4.08c-.378 2.045-.876 3.533-1.492 4.46-.482.716-1.01 1.073-1.583 1.073-.153 0-.34-.046-.566-.138v-.494c.11.017.24.026.386.026.268 0 .483-.075.647-.222.197-.18.295-.382.295-.605 0-.155-.077-.47-.23-.944L6.23 14.615h.91l.727 2.36c.164.536.233.91.205 1.123.4-1.064.678-2.227.835-3.483zm12.325 4.08h-2.63v-5.53h.885v4.85h1.745zm-3.32.135l-1.016-.5c.09-.076.177-.158.255-.25.433-.506.648-1.258.648-2.253 0-1.83-.718-2.746-2.155-2.746-.704 0-1.254.232-1.65.697-.43.508-.646 1.256-.646 2.245 0 .972.19 1.686.574 2.14.35.41.877.615 1.583.615.264 0 .506-.033.725-.098l1.325.772.36-.622zM15.5 17.588c-.225-.36-.337-.94-.337-1.736 0-1.393.424-2.09 1.27-2.09.443 0 .77.167.977.5.224.362.336.936.336 1.723 0 1.404-.424 2.108-1.27 2.108-.445 0-.77-.167-.978-.5zm-1.658-.425c0 .47-.172.856-.516 1.156-.344.3-.803.45-1.384.45-.543 0-1.064-.172-1.573-.515l.237-.476c.438.22.833.328 1.19.328.332 0 .593-.073.783-.22a.754.754 0 00.3-.615c0-.33-.23-.61-.648-.845-.388-.213-1.163-.657-1.163-.657-.422-.307-.632-.636-.632-1.177 0-.45.157-.81.47-1.085.315-.278.72-.415 1.22-.415.512 0 .98.136 1.4.41l-.213.476a2.726 2.726 0 00-1.064-.23c-.283 0-.502.068-.654.206a.685.685 0 00-.248.524c0 .328.234.61.666.85.393.215 1.187.67 1.187.67.433.305.648.63.648 1.168zm9.382-5.852c-.535-.014-.95.04-1.297.188-.1.04-.26.04-.274.167.055.053.063.14.11.214.08.134.218.313.346.407.14.11.28.216.427.31.26.16.555.255.81.416.145.094.293.213.44.313.073.05.12.14.214.172v-.02c-.046-.06-.06-.147-.105-.214-.067-.067-.134-.127-.2-.193a3.223 3.223 0 00-.695-.675c-.214-.146-.682-.35-.77-.595l-.013-.014c.146-.013.32-.066.46-.106.227-.06.435-.047.67-.106.106-.027.213-.06.32-.094v-.06c-.12-.12-.21-.283-.334-.395a8.867 8.867 0 00-1.104-.823c-.21-.134-.476-.22-.697-.334-.08-.04-.214-.06-.26-.127-.12-.146-.19-.34-.275-.514a17.69 17.69 0 01-.547-1.163c-.12-.262-.193-.523-.34-.763-.69-1.137-1.437-1.826-2.586-2.5-.247-.14-.543-.2-.856-.274-.167-.008-.334-.02-.5-.027-.11-.047-.216-.174-.31-.235-.38-.24-1.364-.76-1.644-.072-.18.434.267.862.422 1.082.115.153.26.328.34.5.047.116.06.235.107.356.106.294.207.622.347.897.073.14.153.287.247.413.054.073.146.107.167.227-.094.136-.1.334-.154.5-.24.757-.146 1.693.194 2.25.107.166.362.534.703.393.3-.12.234-.5.32-.835.02-.08.007-.133.048-.187v.015c.094.188.188.367.274.555.206.328.566.668.867.895.16.12.287.328.487.402v-.02h-.015c-.043-.058-.1-.086-.154-.133a3.445 3.445 0 01-.35-.4 8.76 8.76 0 01-.747-1.218c-.11-.21-.202-.436-.29-.643-.04-.08-.04-.2-.107-.24-.1.146-.247.273-.32.453-.127.288-.14.642-.188 1.01-.027.007-.014 0-.027.014-.214-.052-.287-.274-.367-.46-.2-.475-.233-1.238-.06-1.785.047-.14.247-.582.167-.716-.042-.127-.174-.2-.247-.303a2.478 2.478 0 01-.24-.427c-.16-.374-.24-.788-.414-1.162-.08-.173-.22-.354-.334-.513-.127-.18-.267-.307-.368-.52-.033-.073-.08-.194-.027-.274.014-.054.042-.075.094-.09.088-.072.335.022.422.062.247.1.455.194.662.334.094.066.195.193.315.226h.14c.214.047.455.014.655.073.355.114.675.28.962.46a5.953 5.953 0 012.085 2.286c.08.154.115.295.188.455.14.33.313.663.455.982.14.315.275.636.476.897.1.14.502.213.682.286.133.06.34.115.46.188.23.14.454.3.67.454.11.076.443.243.463.378z"/>
+    </symbol>
+    <!-- Clipboard list icon (audit) -->
+    <symbol id="icon-clipboard-list" viewBox="0 0 384 512">
+      <path d="M192 0c-41.8 0-77.4 26.7-90.5 64H64C28.7 64 0 92.7 0 128V448c0 35.3 28.7 64 64 64H320c35.3 0 64-28.7 64-64V128c0-35.3-28.7-64-64-64H282.5C269.4 26.7 233.8 0 192 0zm0 64a32 32 0 1 1 0 64 32 32 0 1 1 0-64zM72 272a24 24 0 1 1 48 0 24 24 0 1 1-48 0zm104-16H304c8.8 0 16 7.2 16 16s-7.2 16-16 16H176c-8.8 0-16-7.2-16-16s7.2-16 16-16zM72 368a24 24 0 1 1 48 0 24 24 0 1 1-48 0zm104-16H304c8.8 0 16 7.2 16 16s-7.2 16-16 16H176c-8.8 0-16-7.2-16-16s7.2-16 16-16z"/>
+    </symbol>
+  </defs>
+
+  <style>
+    text { font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif; }
+    .mono { font-family: 'SF Mono', 'JetBrains Mono', 'Consolas', monospace; }
+    .title { font-size: 24px; font-weight: 700; fill: #fff; letter-spacing: -0.5px; }
+    .subtitle { font-size: 13px; fill: rgba(255,255,255,0.9); }
+    .section-title { font-size: 14px; font-weight: 700; fill: #1e293b; letter-spacing: -0.3px; }
+    .body { font-size: 11px; fill: #475569; line-height: 1.4; }
+    .label { font-size: 10px; fill: #64748b; }
+    .value { font-size: 10px; fill: #1e293b; font-weight: 600; }
+    .small { font-size: 9px; fill: #64748b; }
+    .tiny { font-size: 8px; fill: #94a3b8; }
+  </style>
+
+  <!-- Background -->
+  <rect width="900" height="1350" fill="#f8fafc"/>
+
+  <!-- Header -->
+  <rect width="900" height="100" fill="url(#header-grad)"/>
+  <use href="#icon-diesel" x="32" y="30" width="40" height="40" fill="#fff" opacity="0.9"/>
+  <text x="84" y="45" class="title">diesel-sqlite-session</text>
+  <text x="84" y="65" class="subtitle">SQLite Session Extension for Diesel ORM</text>
+  <text x="84" y="85" font-size="10" fill="rgba(255,255,255,0.7)">Change tracking, bidirectional sync, and replication for Rust applications</text>
+  <use href="#icon-rust" x="820" y="28" width="50" height="50" fill="#fff" opacity="0.9"/>
+
+  <!-- Overview Section -->
+  <g transform="translate(32, 118)">
+    <text x="0" y="0" class="section-title">Overview</text>
+    <rect x="0" y="12" width="836" height="76" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+    <foreignObject x="16" y="18" width="804" height="66">
+      <div xmlns="http://www.w3.org/1999/xhtml" style="font-family: Inter, SF Pro Display, system-ui, sans-serif; font-size: 11px; color: #475569; text-align: justify; line-height: 1.5;">
+        <strong>Real-time database synchronization for Rust applications.</strong> This library wraps <strong>SQLite's official session extension</strong> for the Diesel ORM, enabling change tracking (INSERT, UPDATE, DELETE) and generation of <strong>patchsets</strong> (a standard SQLite binary format). These patchsets can be transmitted via WebSocket and applied to remote SQLite databases with configurable conflict resolution. Supports <strong>native targets</strong> and <strong>WebAssembly</strong>. External CDC sources (PostgreSQL, Kafka) can generate compatible patchsets using <strong>sqlite-diff-rs</strong>.
+      </div>
+    </foreignObject>
+  </g>
+
+  <!-- Architecture Section - Backend to Frontend Flow -->
+  <g transform="translate(32, 226)">
+    <text x="0" y="0" class="section-title">Architecture — Backend CDC to Frontend via WebSocket</text>
+
+    <g transform="translate(0, 18)">
+      <rect width="836" height="200" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+
+      <!-- Left side: External data sources -->
+      <g transform="translate(20, 16)">
+        <text x="60" y="0" text-anchor="middle" class="label" font-weight="700" fill="#5b21b6">External Sources</text>
+
+        <!-- PostgreSQL -->
+        <g transform="translate(0, 12)">
+          <rect width="120" height="38" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/>
+          <use href="#icon-postgres" x="8" y="9" width="20" height="20" fill="#5b21b6"/>
+          <text x="34" y="18" class="tiny" font-weight="600" fill="#5b21b6">PostgreSQL CDC</text>
+          <text x="34" y="29" class="tiny" fill="#7c3aed">wal2json / Debezium</text>
+        </g>
+
+        <!-- MySQL -->
+        <g transform="translate(0, 56)">
+          <rect width="120" height="38" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+          <use href="#icon-mysql" x="8" y="9" width="20" height="20" fill="#ea580c"/>
+          <text x="34" y="18" class="tiny" font-weight="600" fill="#c2410c">MySQL CDC</text>
+          <text x="34" y="29" class="tiny" fill="#ea580c">Maxwell / Debezium</text>
+        </g>
+
+        <!-- Kafka -->
+        <g transform="translate(0, 100)">
+          <rect width="120" height="38" rx="4" fill="#fef2f2" stroke="#fecaca"/>
+          <use href="#icon-kafka" x="8" y="11" width="20" height="20" fill="#dc2626"/>
+          <text x="34" y="18" class="tiny" font-weight="600" fill="#991b1b">Kafka / Streams</text>
+          <text x="34" y="29" class="tiny" fill="#dc2626">Any CDC event</text>
+        </g>
+      </g>
+
+      <!-- Arrow from sources to sqlite-diff-rs -->
+      <g transform="translate(148, 80)">
+        <use href="#icon-arrow-right" x="0" y="0" width="24" height="24" fill="#818cf8"/>
+      </g>
+
+      <!-- sqlite-diff-rs converter -->
+      <g transform="translate(180, 45)">
+        <rect width="130" height="90" rx="6" fill="#eef2ff" stroke="#818cf8" stroke-width="2"/>
+        <use href="#icon-rust" x="45" y="6" width="40" height="40" fill="#4f46e5"/>
+        <text x="65" y="58" text-anchor="middle" font-size="10" font-weight="700" fill="#4338ca">sqlite-diff-rs</text>
+        <text x="65" y="70" text-anchor="middle" class="tiny" fill="#6366f1">CDC → Patchset</text>
+        <text x="65" y="82" text-anchor="middle" class="tiny" fill="#6366f1" font-style="italic">No SQLite needed</text>
+      </g>
+
+      <!-- Arrow from sqlite-diff-rs to WebSocket -->
+      <g transform="translate(320, 82)">
+        <use href="#icon-arrow-right" x="0" y="0" width="24" height="24" fill="#f59e0b"/>
+      </g>
+
+      <!-- WebSocket box -->
+      <g transform="translate(360, 35)">
+        <rect width="130" height="110" rx="6" fill="#fef3c7" stroke="#f59e0b" stroke-width="2"/>
+        <text x="65" y="20" text-anchor="middle" font-size="11" font-weight="700" fill="#b45309">WebSocket</text>
+        <rect x="15" y="30" width="100" height="44" rx="4" fill="#fff7ed" stroke="#fdba74"/>
+        <text x="65" y="48" text-anchor="middle" class="mono" font-size="10" font-weight="600" fill="#c2410c">Patchset</text>
+        <text x="65" y="62" text-anchor="middle" class="mono tiny" fill="#ea580c">Vec&lt;u8&gt;</text>
+        <text x="65" y="90" text-anchor="middle" class="tiny" fill="#b45309">Binary message</text>
+        <text x="65" y="102" text-anchor="middle" class="tiny" fill="#b45309">to browser</text>
+      </g>
+
+      <!-- Arrow from WebSocket to Frontend -->
+      <g transform="translate(500, 82)">
+        <use href="#icon-arrow-right" x="0" y="0" width="24" height="24" fill="#16a34a"/>
+      </g>
+
+      <!-- Frontend with diesel-sqlite-session -->
+      <g transform="translate(540, 8)">
+        
+        <g transform="translate(0, 14)">
+          <rect width="275" height="128" rx="6" fill="#dcfce7" stroke="#16a34a" stroke-width="1.5"/>
+
+          <!-- SQLite + Diesel icons -->
+          <use href="#icon-database" x="15" y="10" width="26" height="26" fill="#16a34a"/>
+          <use href="#icon-diesel" x="48" y="10" width="26" height="26" fill="#16a34a"/>
+
+          <text x="82" y="22" font-size="11" font-weight="600" fill="#166534">diesel-sqlite-session</text>
+          <text x="82" y="36" class="tiny" fill="#22c55e">SQLite WASM + Diesel ORM</text>
+
+          <rect x="12" y="48" width="250" height="66" rx="4" fill="#272822"/>
+          <text x="22" y="64" class="mono tiny" fill="#75715E">// Apply incoming changes</text>
+          <text x="22" y="78" class="mono tiny" fill="#F8F8F2">conn.<tspan fill="#A6E22E">apply_patchset</tspan>(</text>
+          <text x="22" y="92" class="mono tiny" fill="#F8F8F2">    &amp;incoming,</text>
+          <text x="22" y="106" class="mono tiny" fill="#F8F8F2">    |_| <tspan fill="#66D9EF">ConflictAction</tspan>::<tspan fill="#E6DB74">Replace</tspan>)<tspan fill="#75715E">?</tspan>;</text>
+        </g>
+      </g>
+
+      <!-- Flow description -->
+      <g transform="translate(20, 160)">
+        <rect width="796" height="28" rx="4" fill="#f0fdf4" stroke="#86efac"/>
+        <text x="398" y="18" text-anchor="middle" class="small" fill="#166534">Database changes are captured, converted to compact updates, sent in real-time, and applied to the browser's local database</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Performance Section -->
+  <g transform="translate(32, 476)">
+    <text x="0" y="0" class="section-title">Performance — Native &amp; WebAssembly</text>
+
+    <g transform="translate(0, 18)">
+      <!-- Native Performance: diesel-sqlite-session vs rusqlite -->
+      <g transform="translate(0, 0)">
+        <rect width="405" height="210" rx="6" fill="#fff" stroke="#16a34a" stroke-width="1.5"/>
+        <rect width="405" height="28" rx="6" fill="#16a34a"/>
+        <rect y="22" width="405" height="6" fill="#16a34a"/>
+        <text x="202" y="19" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">Native (Linux x86_64) — diesel vs rusqlite</text>
+
+        <g transform="translate(8, 36)">
+          <!-- Table structure with pastel green theme -->
+          <rect x="0" y="0" width="389" height="130" fill="none" stroke="#86efac" stroke-width="1"/>
+          <!-- Header row - pastel green -->
+          <rect x="0" y="0" width="389" height="16" fill="#bbf7d0"/>
+          <line x1="0" y1="16" x2="389" y2="16" stroke="#86efac" stroke-width="1"/>
+          <!-- Alternating row backgrounds - zebra striping with pastels -->
+          <rect x="0" y="16" width="389" height="14" fill="#f0fdf4"/>
+          <rect x="0" y="30" width="389" height="14" fill="#dcfce7"/>
+          <rect x="0" y="44" width="389" height="14" fill="#f0fdf4"/>
+          <rect x="0" y="58" width="389" height="14" fill="#dcfce7"/>
+          <rect x="0" y="72" width="389" height="14" fill="#f0fdf4"/>
+          <rect x="0" y="86" width="389" height="14" fill="#dcfce7"/>
+          <rect x="0" y="100" width="389" height="14" fill="#f0fdf4"/>
+          <rect x="0" y="116" width="389" height="14" fill="#dcfce7"/>
+          <!-- Column dividers -->
+          <line x1="120" y1="0" x2="120" y2="130" stroke="#86efac" stroke-width="1"/>
+          <line x1="255" y1="0" x2="255" y2="130" stroke="#86efac" stroke-width="1"/>
+          <!-- Row lines -->
+          <line x1="0" y1="30" x2="389" y2="30" stroke="#86efac" stroke-width="0.5"/>
+          <line x1="0" y1="44" x2="389" y2="44" stroke="#86efac" stroke-width="0.5"/>
+          <line x1="0" y1="58" x2="389" y2="58" stroke="#86efac" stroke-width="0.5"/>
+          <line x1="0" y1="72" x2="389" y2="72" stroke="#86efac" stroke-width="0.5"/>
+          <line x1="0" y1="86" x2="389" y2="86" stroke="#86efac" stroke-width="0.5"/>
+          <line x1="0" y1="100" x2="389" y2="100" stroke="#86efac" stroke-width="0.5"/>
+          <line x1="0" y1="114" x2="389" y2="114" stroke="#86efac" stroke-width="0.5"/>
+
+          <!-- Header text -->
+          <text x="60" y="11" text-anchor="middle" class="tiny" font-weight="700" fill="#14532d">Operation</text>
+          <text x="187" y="11" text-anchor="middle" class="tiny" font-weight="700" fill="#14532d">diesel (mean ± std)</text>
+          <text x="322" y="11" text-anchor="middle" class="tiny" font-weight="700" fill="#14532d">rusqlite (mean ± std)</text>
+
+          <!-- Data rows - dark text for contrast -->
+          <text x="6" y="25" class="tiny" fill="#14532d">Session creation</text>
+          <text x="187" y="25" text-anchor="middle" class="mono tiny" fill="#166534">36.4 ± 0.4 µs</text>
+          <text x="322" y="25" text-anchor="middle" class="mono tiny" fill="#0c4a6e">34.6 ± 0.3 µs</text>
+
+          <text x="6" y="39" class="tiny" fill="#14532d">Attach table</text>
+          <text x="187" y="39" text-anchor="middle" class="mono tiny" fill="#166534">35.6 ± 0.2 µs</text>
+          <text x="322" y="39" text-anchor="middle" class="mono tiny" fill="#0c4a6e">33.9 ± 0.2 µs</text>
+
+          <text x="6" y="53" class="tiny" fill="#14532d">Patchset (100 rows)</text>
+          <text x="187" y="53" text-anchor="middle" class="mono tiny" fill="#166534">285 ± 3 µs</text>
+          <text x="322" y="53" text-anchor="middle" class="mono tiny" fill="#0c4a6e">337 ± 4 µs</text>
+
+          <text x="6" y="67" class="tiny" fill="#14532d">Patchset (500 rows)</text>
+          <text x="187" y="67" text-anchor="middle" class="mono tiny" fill="#166534" font-weight="600">1.19 ± 0.01 ms</text>
+          <text x="322" y="67" text-anchor="middle" class="mono tiny" fill="#0c4a6e">1.44 ± 0.01 ms</text>
+
+          <text x="6" y="81" class="tiny" fill="#14532d">Apply patchset (100)</text>
+          <text x="187" y="81" text-anchor="middle" class="mono tiny" fill="#166534">110 ± 1 µs</text>
+          <text x="322" y="81" text-anchor="middle" class="mono tiny" fill="#0c4a6e">107 ± 1 µs</text>
+
+          <text x="6" y="95" class="tiny" fill="#14532d">Apply patchset (500)</text>
+          <text x="187" y="95" text-anchor="middle" class="mono tiny" fill="#166534">389 ± 5 µs</text>
+          <text x="322" y="95" text-anchor="middle" class="mono tiny" fill="#0c4a6e">379 ± 7 µs</text>
+
+          <text x="6" y="109" class="tiny" fill="#14532d">Mixed ops (75 changes)</text>
+          <text x="187" y="109" text-anchor="middle" class="mono tiny" fill="#166534" font-weight="600">327 ± 2 µs</text>
+          <text x="322" y="109" text-anchor="middle" class="mono tiny" fill="#0c4a6e">371 ± 6 µs</text>
+
+          <text x="6" y="123" class="tiny" fill="#14532d">Full replication (100)</text>
+          <text x="187" y="123" text-anchor="middle" class="mono tiny" fill="#166534" font-weight="600">402 ± 6 µs</text>
+          <text x="322" y="123" text-anchor="middle" class="mono tiny" fill="#0c4a6e">458 ± 6 µs</text>
+        </g>
+
+        <!-- Summary -->
+        <rect x="8" y="172" width="389" height="30" rx="3" fill="#ecfdf5" stroke="#86efac"/>
+        <text x="202" y="185" text-anchor="middle" class="tiny" fill="#166534">diesel: 12-18% faster for data-heavy ops | ~5% overhead for setup</text>
+        <text x="202" y="196" text-anchor="middle" class="tiny" fill="#166534">Performance comparable; choose based on ORM preference</text>
+      </g>
+
+      <!-- WASM Performance - Chrome vs Firefox -->
+      <g transform="translate(431, 0)">
+        <rect width="405" height="210" rx="6" fill="#fff" stroke="#4f46e5" stroke-width="1.5"/>
+        <rect width="405" height="28" rx="6" fill="#4f46e5"/>
+        <rect y="22" width="405" height="6" fill="#4f46e5"/>
+        <text x="202" y="19" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">WebAssembly (Chrome vs Firefox)</text>
+
+        <g transform="translate(8, 36)">
+          <!-- Table structure with pastel violet theme -->
+          <rect x="0" y="0" width="389" height="130" fill="none" stroke="#c4b5fd" stroke-width="1"/>
+          <!-- Header row - pastel violet -->
+          <rect x="0" y="0" width="389" height="16" fill="#ddd6fe"/>
+          <line x1="0" y1="16" x2="389" y2="16" stroke="#c4b5fd" stroke-width="1"/>
+          <!-- Alternating row backgrounds - zebra striping with pastels -->
+          <rect x="0" y="16" width="389" height="14" fill="#f5f3ff"/>
+          <rect x="0" y="30" width="389" height="14" fill="#ede9fe"/>
+          <rect x="0" y="44" width="389" height="14" fill="#f5f3ff"/>
+          <rect x="0" y="58" width="389" height="14" fill="#ede9fe"/>
+          <rect x="0" y="72" width="389" height="14" fill="#f5f3ff"/>
+          <rect x="0" y="86" width="389" height="14" fill="#ede9fe"/>
+          <rect x="0" y="100" width="389" height="14" fill="#f5f3ff"/>
+          <rect x="0" y="116" width="389" height="14" fill="#ede9fe"/>
+          <!-- Column dividers -->
+          <line x1="120" y1="0" x2="120" y2="130" stroke="#c4b5fd" stroke-width="1"/>
+          <line x1="255" y1="0" x2="255" y2="130" stroke="#c4b5fd" stroke-width="1"/>
+          <!-- Row lines -->
+          <line x1="0" y1="30" x2="389" y2="30" stroke="#c4b5fd" stroke-width="0.5"/>
+          <line x1="0" y1="44" x2="389" y2="44" stroke="#c4b5fd" stroke-width="0.5"/>
+          <line x1="0" y1="58" x2="389" y2="58" stroke="#c4b5fd" stroke-width="0.5"/>
+          <line x1="0" y1="72" x2="389" y2="72" stroke="#c4b5fd" stroke-width="0.5"/>
+          <line x1="0" y1="86" x2="389" y2="86" stroke="#c4b5fd" stroke-width="0.5"/>
+          <line x1="0" y1="100" x2="389" y2="100" stroke="#c4b5fd" stroke-width="0.5"/>
+          <line x1="0" y1="114" x2="389" y2="114" stroke="#c4b5fd" stroke-width="0.5"/>
+
+          <!-- Header text -->
+          <text x="60" y="11" text-anchor="middle" class="tiny" font-weight="700" fill="#3730a3">Operation</text>
+          <text x="187" y="11" text-anchor="middle" class="tiny" font-weight="700" fill="#3730a3">Chrome (mean ± std)</text>
+          <text x="322" y="11" text-anchor="middle" class="tiny" font-weight="700" fill="#3730a3">Firefox (mean ± std)</text>
+
+          <!-- Data rows - dark text for contrast -->
+          <text x="6" y="25" class="tiny" fill="#3730a3">Session creation</text>
+          <text x="187" y="25" text-anchor="middle" class="mono tiny" fill="#c2410c">0.05 ± 0.01 ms</text>
+          <text x="322" y="25" text-anchor="middle" class="mono tiny" fill="#9a3412">0.03 ± 0.01 ms</text>
+
+          <text x="6" y="39" class="tiny" fill="#3730a3">Attach table</text>
+          <text x="187" y="39" text-anchor="middle" class="mono tiny" fill="#c2410c">0.02 ± 0.01 ms</text>
+          <text x="322" y="39" text-anchor="middle" class="mono tiny" fill="#9a3412">0.03 ± 0.01 ms</text>
+
+          <text x="6" y="53" class="tiny" fill="#3730a3">Patchset (100 rows)</text>
+          <text x="187" y="53" text-anchor="middle" class="mono tiny" fill="#c2410c">0.40 ± 0.11 ms</text>
+          <text x="322" y="53" text-anchor="middle" class="mono tiny" fill="#9a3412">0.48 ± 0.08 ms</text>
+
+          <text x="6" y="67" class="tiny" fill="#3730a3">Patchset (1000 rows)</text>
+          <text x="187" y="67" text-anchor="middle" class="mono tiny" fill="#c2410c">1.67 ± 0.07 ms</text>
+          <text x="322" y="67" text-anchor="middle" class="mono tiny" fill="#9a3412">2.81 ± 0.10 ms</text>
+
+          <text x="6" y="81" class="tiny" fill="#3730a3">Apply patchset (100)</text>
+          <text x="187" y="81" text-anchor="middle" class="mono tiny" fill="#c2410c">0.35 ± 0.03 ms</text>
+          <text x="322" y="81" text-anchor="middle" class="mono tiny" fill="#9a3412">0.43 ± 0.01 ms</text>
+
+          <text x="6" y="95" class="tiny" fill="#3730a3">Apply patchset (500)</text>
+          <text x="187" y="95" text-anchor="middle" class="mono tiny" fill="#c2410c">1.87 ± 0.59 ms</text>
+          <text x="322" y="95" text-anchor="middle" class="mono tiny" fill="#9a3412">1.51 ± 0.11 ms</text>
+
+          <text x="6" y="109" class="tiny" fill="#3730a3">Mixed ops (75 changes)</text>
+          <text x="187" y="109" text-anchor="middle" class="mono tiny" fill="#c2410c">1.93 ± 0.27 ms</text>
+          <text x="322" y="109" text-anchor="middle" class="mono tiny" fill="#9a3412">2.27 ± 0.01 ms</text>
+
+          <text x="6" y="123" class="tiny" fill="#3730a3">Full replication (100)</text>
+          <text x="187" y="123" text-anchor="middle" class="mono tiny" fill="#c2410c">3.25 ± 0.36 ms</text>
+          <text x="322" y="123" text-anchor="middle" class="mono tiny" fill="#9a3412">3.78 ± 0.18 ms</text>
+        </g>
+
+        <!-- Summary -->
+        <rect x="8" y="172" width="389" height="30" rx="3" fill="#eef2ff" stroke="#a5b4fc"/>
+        <text x="202" y="185" text-anchor="middle" class="tiny" fill="#4338ca">Chrome and Firefox show comparable performance within variance</text>
+        <text x="202" y="196" text-anchor="middle" class="tiny" fill="#4338ca">~8-10x slower than native (JS/WASM boundary + sandbox)</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Use Cases -->
+  <g transform="translate(32, 728)">
+    <text x="0" y="0" class="section-title">Use Cases</text>
+
+    <g transform="translate(0, 18)">
+      <rect width="836" height="90" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
+
+      <!-- Use case 1 -->
+      <g transform="translate(30, 16)">
+        <rect width="180" height="58" rx="4" fill="#f0f9ff" stroke="#7dd3fc"/>
+        <use href="#icon-mobile" x="8" y="14" width="24" height="24" fill="#0284c7"/>
+        <text x="40" y="22" font-size="10" font-weight="600" fill="#0369a1">Offline-First Apps</text>
+        <text x="40" y="36" class="tiny" fill="#0ea5e9">Track changes offline,</text>
+        <text x="40" y="46" class="tiny" fill="#0ea5e9">sync when connected</text>
+      </g>
+
+      <!-- Use case 2 -->
+      <g transform="translate(230, 16)">
+        <rect width="180" height="58" rx="4" fill="#ecfdf5" stroke="#86efac"/>
+        <use href="#icon-sync" x="8" y="14" width="24" height="24" fill="#16a34a"/>
+        <text x="40" y="22" font-size="10" font-weight="600" fill="#166534">Multi-Master Sync</text>
+        <text x="40" y="36" class="tiny" fill="#22c55e">Bidirectional changes</text>
+        <text x="40" y="46" class="tiny" fill="#22c55e">between all peers</text>
+      </g>
+
+      <!-- Use case 3 -->
+      <g transform="translate(430, 16)">
+        <rect width="180" height="58" rx="4" fill="#f5f3ff" stroke="#c4b5fd"/>
+        <use href="#icon-postgres" x="8" y="14" width="24" height="24" fill="#7c3aed"/>
+        <text x="40" y="22" font-size="10" font-weight="600" fill="#5b21b6">PostgreSQL → SQLite</text>
+        <text x="40" y="36" class="tiny" fill="#7c3aed">CDC via sqlite-diff-rs</text>
+        <text x="40" y="46" class="tiny" fill="#7c3aed">to edge replicas</text>
+      </g>
+
+      <!-- Use case 4 -->
+      <g transform="translate(630, 16)">
+        <rect width="180" height="58" rx="4" fill="#fef3c7" stroke="#fcd34d"/>
+        <use href="#icon-clipboard-list" x="8" y="14" width="24" height="24" fill="#b45309"/>
+        <text x="40" y="22" font-size="10" font-weight="600" fill="#92400e">Audit Logging</text>
+        <text x="40" y="36" class="tiny" fill="#d97706">Capture exact changes</text>
+        <text x="40" y="46" class="tiny" fill="#d97706">for compliance</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Code Example -->
+  <g transform="translate(32, 860)">
+    <text x="0" y="0" class="section-title">Quick Start</text>
+
+    <g transform="translate(0, 18)">
+      <rect width="836" height="200" rx="6" fill="#272822"/>
+      <g transform="translate(20, 20)">
+        <text y="0" class="mono" font-size="10" fill="#75715E">// Create session and track changes</text>
+        <text y="16" class="mono" font-size="10" fill="#F8F8F2"><tspan fill="#F92672">let mut</tspan> session = conn.<tspan fill="#A6E22E">create_session</tspan>()<tspan fill="#75715E">?</tspan>;</text>
+        <text y="32" class="mono" font-size="10" fill="#F8F8F2">session.<tspan fill="#A6E22E">attach</tspan>::&lt;<tspan fill="#66D9EF">users::table</tspan>&gt;()<tspan fill="#75715E">?</tspan>;</text>
+        <text y="56" class="mono" font-size="10" fill="#75715E">// Make changes (INSERT, UPDATE, DELETE)</text>
+        <text y="72" class="mono" font-size="10" fill="#F8F8F2">diesel::<tspan fill="#A6E22E">insert_into</tspan>(users::table)</text>
+        <text y="88" class="mono" font-size="10" fill="#F8F8F2">    .<tspan fill="#A6E22E">values</tspan>(&amp;new_user).<tspan fill="#A6E22E">execute</tspan>(&amp;<tspan fill="#F92672">mut</tspan> conn)<tspan fill="#75715E">?</tspan>;</text>
+        <text y="112" class="mono" font-size="10" fill="#75715E">// Generate patchset (to send to other peers)</text>
+        <text y="128" class="mono" font-size="10" fill="#F8F8F2"><tspan fill="#F92672">let</tspan> patchset = session.<tspan fill="#A6E22E">patchset</tspan>()<tspan fill="#75715E">?</tspan>;</text>
+        <text y="152" class="mono" font-size="10" fill="#75715E">// Apply incoming patchset (from any peer or sqlite-diff-rs)</text>
+        <text y="168" class="mono" font-size="10" fill="#F8F8F2">conn.<tspan fill="#A6E22E">apply_patchset</tspan>(&amp;incoming, |_| <tspan fill="#66D9EF">ConflictAction</tspan>::<tspan fill="#E6DB74">Replace</tspan>)<tspan fill="#75715E">?</tspan>;</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Footer -->
+  <g transform="translate(0, 1090)">
+    <rect width="900" height="30" fill="#f1f5f9"/>
+    <text x="450" y="19" text-anchor="middle" font-size="9" fill="#94a3b8">diesel-sqlite-session | MIT License | github.com/LucaCappelletti94/diesel-sqlite-session</text>
+  </g>
+</svg>

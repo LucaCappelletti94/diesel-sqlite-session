@@ -1,6 +1,6 @@
 //! Native benchmarks using Criterion.
 //!
-//! Run with: cargo bench --bench session_benchmarks
+//! Run with: `cargo bench --bench session_benchmarks`
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use diesel::prelude::*;
@@ -94,8 +94,8 @@ fn bench_attach_table(c: &mut Criterion) {
 fn bench_patchset_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("patchset_generation");
 
-    for row_count in [10, 100, 500].iter() {
-        group.throughput(Throughput::Elements(*row_count as u64));
+    for row_count in &[10, 100, 500] {
+        group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
         group.bench_with_input(
             BenchmarkId::from_parameter(row_count),
             row_count,
@@ -120,8 +120,8 @@ fn bench_patchset_generation(c: &mut Criterion) {
 fn bench_changeset_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("changeset_generation");
 
-    for row_count in [10, 100, 500].iter() {
-        group.throughput(Throughput::Elements(*row_count as u64));
+    for row_count in &[10, 100, 500] {
+        group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
         group.bench_with_input(
             BenchmarkId::from_parameter(row_count),
             row_count,
@@ -146,7 +146,7 @@ fn bench_changeset_generation(c: &mut Criterion) {
 fn bench_apply_patchset(c: &mut Criterion) {
     let mut group = c.benchmark_group("apply_patchset");
 
-    for row_count in [10, 100, 500].iter() {
+    for row_count in &[10, 100, 500] {
         // Pre-generate the patchset
         let patchset = {
             let mut conn = setup_connection();
@@ -158,7 +158,7 @@ fn bench_apply_patchset(c: &mut Criterion) {
             session.patchset().unwrap()
         };
 
-        group.throughput(Throughput::Elements(*row_count as u64));
+        group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
         group.bench_with_input(
             BenchmarkId::from_parameter(row_count),
             &patchset,

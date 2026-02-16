@@ -3,7 +3,7 @@
 //! This benchmark compares the performance of diesel-sqlite-session against
 //! rusqlite's native session extension support to measure any overhead.
 //!
-//! Run with: cargo bench --bench comparison_benchmarks
+//! Run with: `cargo bench --bench comparison_benchmarks`
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::hint::black_box;
@@ -176,7 +176,7 @@ mod rusqlite_impl {
         output
     }
 
-    /// Apply changeset bytes using apply_strm.
+    /// Apply changeset bytes using `apply_strm`.
     pub fn apply_changeset_to_conn(conn: &Connection, changeset_bytes: &[u8]) {
         conn.apply_strm(
             &mut &changeset_bytes[..],
@@ -245,8 +245,8 @@ fn bench_attach_table(c: &mut Criterion) {
 fn bench_patchset_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("patchset_generation");
 
-    for row_count in [10, 100, 500].iter() {
-        group.throughput(Throughput::Elements(*row_count as u64));
+    for row_count in &[10, 100, 500] {
+        group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
 
         group.bench_with_input(
             BenchmarkId::new("diesel-sqlite-session", row_count),
@@ -282,8 +282,8 @@ fn bench_patchset_generation(c: &mut Criterion) {
 fn bench_changeset_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("changeset_generation");
 
-    for row_count in [10, 100, 500].iter() {
-        group.throughput(Throughput::Elements(*row_count as u64));
+    for row_count in &[10, 100, 500] {
+        group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
 
         group.bench_with_input(
             BenchmarkId::new("diesel-sqlite-session", row_count),
@@ -319,7 +319,7 @@ fn bench_changeset_generation(c: &mut Criterion) {
 fn bench_apply_patchset(c: &mut Criterion) {
     let mut group = c.benchmark_group("apply_patchset");
 
-    for row_count in [10, 100, 500].iter() {
+    for row_count in &[10, 100, 500] {
         // Pre-generate patchsets
         let diesel_patchset = {
             let mut conn = diesel_impl::setup_connection();
@@ -334,7 +334,7 @@ fn bench_apply_patchset(c: &mut Criterion) {
             rusqlite_impl::create_session_and_generate_patchset(&conn, *row_count)
         };
 
-        group.throughput(Throughput::Elements(*row_count as u64));
+        group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
 
         group.bench_with_input(
             BenchmarkId::new("diesel-sqlite-session", row_count),
@@ -364,7 +364,7 @@ fn bench_apply_patchset(c: &mut Criterion) {
 fn bench_apply_changeset(c: &mut Criterion) {
     let mut group = c.benchmark_group("apply_changeset");
 
-    for row_count in [10, 100, 500].iter() {
+    for row_count in &[10, 100, 500] {
         // Pre-generate changesets
         let diesel_changeset = {
             let mut conn = diesel_impl::setup_connection();
@@ -379,7 +379,7 @@ fn bench_apply_changeset(c: &mut Criterion) {
             rusqlite_impl::create_session_and_generate_changeset(&conn, *row_count)
         };
 
-        group.throughput(Throughput::Elements(*row_count as u64));
+        group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
 
         group.bench_with_input(
             BenchmarkId::new("diesel-sqlite-session", row_count),

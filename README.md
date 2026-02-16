@@ -1,10 +1,10 @@
 # diesel-sqlite-session
 
-SQLite session extension support for Diesel ORM.
+`SQLite` session extension support for Diesel ORM.
 
-This crate provides SQLite [session extension](https://sqlite.org/sessionintro.html) support for Diesel, enabling tracking of database changes and generation of transferable changesets/patchsets for replication, sync, and audit purposes.
+This crate provides `SQLite` [session extension](https://sqlite.org/sessionintro.html) support for Diesel, enabling tracking of database changes and generation of transferable changesets/patchsets for replication, sync, and audit purposes.
 
-> **Note**: This crate requires access to Diesel's raw SQLite connection handle via `with_raw_connection`. Until [diesel#4966](https://github.com/diesel-rs/diesel/pull/4966) is merged, you must use a fork that exposes this API:
+> **Note**: This crate requires access to Diesel's raw `SQLite` connection handle via `with_raw_connection`. Until [diesel#4966](https://github.com/diesel-rs/diesel/pull/4966) is merged, you must use a fork that exposes this API:
 >
 > ```toml
 > [dependencies]
@@ -185,7 +185,7 @@ replica.apply_patchset(&patchset, |conflict_type| {
 
 ## Benchmarks
 
-### Native Performance (Linux x86_64)
+### Native Performance (Linux `x86_64`)
 
 Benchmarks run using Criterion on native targets with LTO and single codegen unit.
 
@@ -253,23 +253,27 @@ This means diesel-sqlite-session is the only option for:
 - **Cross-platform replication** between browser, mobile, and server
 - **Browser-based collaborative editing** with conflict resolution
 
-### WebAssembly Performance (Firefox)
+### WebAssembly Performance
 
-Benchmarks run using wasm-bindgen-test in headless Firefox.
+Benchmarks run using wasm-bindgen-test in headless browsers.
 
-| Operation | Time | Throughput |
-|-----------|------|------------|
-| Session creation | 0.03 ms | 34K ops/sec |
-| Attach table | 0.02 ms | 49K ops/sec |
-| Patchset (100 rows) | 0.40 ms | 2.5K ops/sec |
-| Patchset (1000 rows) | 3.03 ms | 330 ops/sec |
-| Apply patchset (100 rows) | 0.59 ms | 1.7K ops/sec |
-| Full replication (100 rows) | 3.80 ms | 263 ops/sec |
+#### Chrome vs Firefox Comparison
 
-**WASM vs Native**: WebAssembly performance is approximately 8-10x slower than native for most operations. This is expected due to:
+| Operation | Chrome (mean ± std) | Firefox (mean ± std) |
+|-----------|---------------------|----------------------|
+| Session creation | 0.05 ± 0.01 ms | 0.03 ± 0.01 ms |
+| Attach table | 0.02 ± 0.01 ms | 0.03 ± 0.01 ms |
+| Patchset (100 rows) | 0.40 ± 0.11 ms | 0.48 ± 0.08 ms |
+| Patchset (1000 rows) | 1.67 ± 0.07 ms | 2.81 ± 0.10 ms |
+| Apply patchset (100 rows) | 0.35 ± 0.03 ms | 0.43 ± 0.01 ms |
+| Apply patchset (500 rows) | 1.87 ± 0.59 ms | 1.51 ± 0.11 ms |
+| Mixed ops (75 changes) | 1.93 ± 0.27 ms | 2.27 ± 0.01 ms |
+| Full replication (100 rows) | 3.25 ± 0.36 ms | 3.78 ± 0.18 ms |
+
+**WASM vs Native**: WebAssembly performance is approximately 8-10x slower than native for most operations. Chrome and Firefox show comparable performance within measurement variance. This overhead is expected due to:
 
 - JavaScript/WASM boundary overhead
-- sqlite-wasm-rs overhead compared to native SQLite
+- sqlite-wasm-rs overhead compared to native `SQLite`
 - Browser sandbox constraints
 
 ## Running Benchmarks
@@ -284,6 +288,7 @@ cargo bench --bench comparison_benchmarks
 # WASM benchmarks (requires wasm-pack)
 cargo install wasm-pack
 cd wasm-bench && wasm-pack test --headless --firefox -- -- --nocapture
+cd wasm-bench && wasm-pack test --headless --chrome -- -- --nocapture
 ```
 
 ## Use Cases
@@ -296,7 +301,7 @@ cd wasm-bench && wasm-pack test --headless --firefox -- -- --nocapture
 
 ## Related Projects
 
-- **[sqlite-diff-rs](https://github.com/LucaCappelletti94/sqlite-diff-rs)** - Build SQLite changesets/patchsets programmatically without requiring SQLite. Useful for constructing changesets from other sources (PostgreSQL CDC, Debezium, Maxwell) and applying them with diesel-sqlite-session.
+- **[sqlite-diff-rs](https://github.com/LucaCappelletti94/sqlite-diff-rs)** - Build `SQLite` changesets/patchsets programmatically without requiring `SQLite`. Useful for constructing changesets from other sources (`PostgreSQL` CDC, Debezium, Maxwell) and applying them with diesel-sqlite-session.
 
 ## License
 
