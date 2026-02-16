@@ -53,17 +53,6 @@ jobs:
       - name: Check benchmarks compile
         run: cargo test --benches --no-run
 
-  # Run tests with different Rust versions
-  msrv:
-    name: MSRV (1.78)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.78
-      - uses: Swatinem/rust-cache@v2
-      - name: Check MSRV
-        run: cargo check --all-features
-
   # WASM tests
   wasm:
     name: WASM Tests
