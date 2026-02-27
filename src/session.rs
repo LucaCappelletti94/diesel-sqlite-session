@@ -1,7 +1,9 @@
 //! `SQLite` session management for Diesel connections.
 
-use std::ffi::CString;
+use std::ffi::{c_int, c_void, CString};
+use std::marker::PhantomData;
 use std::ptr;
+use std::rc::Rc;
 
 use diesel::internal::table_macro::{Identifier, StaticQueryFragment};
 use diesel::SqliteConnection;
@@ -24,6 +26,23 @@ use crate::ffi::{
 /// You must ensure that the session is dropped before the connection it was
 /// created from. Using a session after its connection has been dropped is
 /// undefined behavior.
+///
+/// # Threading
+///
+/// `Session` is intentionally neither [`Send`] nor [`Sync`]. Session handles
+/// are bound to `SQLite` connection state and must stay on the originating thread.
+///
+/// ```compile_fail
+/// fn assert_send<T: Send>() {}
+/// use diesel_sqlite_session::Session;
+/// assert_send::<Session>();
+/// ```
+///
+/// ```compile_fail
+/// fn assert_sync<T: Sync>() {}
+/// use diesel_sqlite_session::Session;
+/// assert_sync::<Session>();
+/// ```
 ///
 /// # Example
 ///
@@ -56,10 +75,12 @@ use crate::ffi::{
 /// ```
 pub struct Session {
     session: *mut sqlite3_session,
+    _not_send_or_sync: PhantomData<Rc<()>>,
 }
 
-// Session is not Send or Sync because SQLite sessions are tied to their
-// connection's thread.
+type SessionExportFn =
+    unsafe extern "C" fn(*mut sqlite3_session, *mut c_int, *mut *mut c_void) -> c_int;
+const MAIN_DB_NAME: &std::ffi::CStr = c"main";
 
 impl Session {
     /// Internal constructor - called by `SqliteSessionExt::create_session`.
@@ -74,14 +95,13 @@ impl Session {
     /// # Errors
     ///
     /// Returns `SessionError::CreateFailed` if `SQLite` fails to create the session.
-    #[allow(clippy::missing_panics_doc)] // "main" is a static string without null bytes
     pub(crate) fn new_internal(conn: &mut SqliteConnection) -> Result<Self, SessionError> {
-        let db_name = CString::new("main").expect("main is a valid C string");
-
+        // SAFETY: `with_raw_connection` provides a valid SQLite handle for the duration
+        // of the callback, and `MAIN_DB_NAME` is a static NUL-terminated C string.
         let session = unsafe {
             conn.with_raw_connection(|raw| {
                 let mut session: *mut sqlite3_session = ptr::null_mut();
-                let rc = sqlite3session_create(raw, db_name.as_ptr(), &mut session);
+                let rc = sqlite3session_create(raw, MAIN_DB_NAME.as_ptr(), &mut session);
                 if rc != SQLITE_OK {
                     return Err(SessionError::CreateFailed(SqliteErrorCode::from_error(rc)));
                 }
@@ -89,7 +109,10 @@ impl Session {
             })
         }?;
 
-        Ok(Self { session })
+        Ok(Self {
+            session,
+            _not_send_or_sync: PhantomData,
+        })
     }
 
     /// Attach a table to track using a Diesel table type.
@@ -133,6 +156,8 @@ impl Session {
     ///
     /// Returns `SessionError::AttachFailed` if `SQLite` fails to attach.
     pub fn attach_all(&mut self) -> Result<(), SessionError> {
+        // SAFETY: `self.session` is created by `sqlite3session_create` and remains valid
+        // for the lifetime of `Session`; passing null tracks all tables per SQLite API.
         let rc = unsafe { sqlite3session_attach(self.session, ptr::null()) };
 
         if rc != SQLITE_OK {
@@ -153,6 +178,8 @@ impl Session {
     /// Returns `SessionError::AttachFailed` if `SQLite` fails to attach the table.
     pub fn attach_by_name(&mut self, table: &str) -> Result<(), SessionError> {
         let c_name = CString::new(table).map_err(|_| SessionError::InvalidTableName)?;
+        // SAFETY: `self.session` is a live session handle and `c_name` is a valid
+        // NUL-terminated table name for the duration of this call.
         let rc = unsafe { sqlite3session_attach(self.session, c_name.as_ptr()) };
 
         if rc != SQLITE_OK {
@@ -170,31 +197,8 @@ impl Session {
     /// # Errors
     ///
     /// Returns `SessionError::ChangesetFailed` if `SQLite` fails to generate the changeset.
-    #[allow(clippy::cast_sign_loss)] // size is checked to be > 0
     pub fn changeset(&mut self) -> Result<Vec<u8>, SessionError> {
-        let mut size: i32 = 0;
-        let mut buffer: *mut std::ffi::c_void = ptr::null_mut();
-
-        let rc = unsafe { sqlite3session_changeset(self.session, &mut size, &mut buffer) };
-
-        if rc != SQLITE_OK {
-            return Err(SessionError::ChangesetFailed(SqliteErrorCode::from_error(
-                rc,
-            )));
-        }
-
-        let result = if size > 0 && !buffer.is_null() {
-            let slice = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), size as usize) };
-            slice.to_vec()
-        } else {
-            Vec::new()
-        };
-
-        if !buffer.is_null() {
-            unsafe { sqlite3_free(buffer) };
-        }
-
-        Ok(result)
+        self.export_changes(sqlite3session_changeset, SessionError::ChangesetFailed)
     }
 
     /// Generate a patchset from tracked changes.
@@ -206,31 +210,8 @@ impl Session {
     /// # Errors
     ///
     /// Returns `SessionError::PatchsetFailed` if `SQLite` fails to generate the patchset.
-    #[allow(clippy::cast_sign_loss)] // size is checked to be > 0
     pub fn patchset(&mut self) -> Result<Vec<u8>, SessionError> {
-        let mut size: i32 = 0;
-        let mut buffer: *mut std::ffi::c_void = ptr::null_mut();
-
-        let rc = unsafe { sqlite3session_patchset(self.session, &mut size, &mut buffer) };
-
-        if rc != SQLITE_OK {
-            return Err(SessionError::PatchsetFailed(SqliteErrorCode::from_error(
-                rc,
-            )));
-        }
-
-        let result = if size > 0 && !buffer.is_null() {
-            let slice = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), size as usize) };
-            slice.to_vec()
-        } else {
-            Vec::new()
-        };
-
-        if !buffer.is_null() {
-            unsafe { sqlite3_free(buffer) };
-        }
-
-        Ok(result)
+        self.export_changes(sqlite3session_patchset, SessionError::PatchsetFailed)
     }
 
     /// Check if the session has recorded any changes.
@@ -239,6 +220,7 @@ impl Session {
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
+        // SAFETY: `self.session` is a valid handle owned by this `Session`.
         unsafe { sqlite3session_isempty(self.session) != 0 }
     }
 
@@ -248,14 +230,55 @@ impl Session {
     /// temporarily suspending tracking during bulk operations.
     #[inline]
     pub fn set_enabled(&mut self, enabled: bool) {
+        // SAFETY: `self.session` is a valid handle owned by this `Session`.
         unsafe {
             sqlite3session_enable(self.session, i32::from(enabled));
         }
+    }
+
+    fn export_changes(
+        &mut self,
+        export_fn: SessionExportFn,
+        map_error: fn(SqliteErrorCode) -> SessionError,
+    ) -> Result<Vec<u8>, SessionError> {
+        let mut size: c_int = 0;
+        let mut buffer: *mut c_void = ptr::null_mut();
+
+        // SAFETY: `export_fn` is one of SQLite's session export functions and
+        // receives valid out-pointers to write size and buffer.
+        let rc = unsafe { export_fn(self.session, &mut size, &mut buffer) };
+        if rc != SQLITE_OK {
+            return Err(map_error(SqliteErrorCode::from_error(rc)));
+        }
+
+        let result = if size <= 0 || buffer.is_null() {
+            Ok(Vec::new())
+        } else {
+            usize::try_from(size)
+                .map_err(|_| map_error(SqliteErrorCode::Unknown(size)))
+                .map(|byte_len| {
+                    // SAFETY: SQLite returned a non-null buffer with `byte_len` bytes;
+                    // we copy those bytes immediately into an owned `Vec<u8>`.
+                    let bytes =
+                        unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), byte_len) };
+                    bytes.to_vec()
+                })
+        };
+
+        if !buffer.is_null() {
+            // SAFETY: SQLite allocates export buffers with sqlite3_malloc-family APIs
+            // and requires release via `sqlite3_free`.
+            unsafe { sqlite3_free(buffer) };
+        }
+
+        result
     }
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
+        // SAFETY: `self.session` is owned by this type and must be released
+        // exactly once with `sqlite3session_delete`.
         unsafe {
             sqlite3session_delete(self.session);
         }

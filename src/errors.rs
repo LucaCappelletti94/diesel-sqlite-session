@@ -34,32 +34,8 @@ pub enum SqliteErrorCode {
 }
 
 impl SqliteErrorCode {
-    /// Create from a raw `SQLite` result code.
-    ///
-    /// Returns `None` for `SQLITE_OK` (0) since that indicates success.
     #[must_use]
-    pub const fn from_raw(code: i32) -> Option<Self> {
-        match code {
-            0 => None, // SQLITE_OK
-            1 => Some(Self::Error),
-            2 => Some(Self::Internal),
-            3 => Some(Self::Permission),
-            5 => Some(Self::Busy),
-            6 => Some(Self::Locked),
-            7 => Some(Self::NoMemory),
-            8 => Some(Self::ReadOnly),
-            17 => Some(Self::Schema),
-            21 => Some(Self::Misuse),
-            other => Some(Self::Unknown(other)),
-        }
-    }
-
-    /// Create from a non-zero `SQLite` error code.
-    ///
-    /// Use this when you've already verified the code is not `SQLITE_OK`.
-    /// Falls back to `Unknown(code)` if the code is 0 or unrecognized.
-    #[must_use]
-    pub const fn from_error(code: i32) -> Self {
+    const fn from_nonzero_raw(code: i32) -> Self {
         match code {
             1 => Self::Error,
             2 => Self::Internal,
@@ -72,6 +48,45 @@ impl SqliteErrorCode {
             21 => Self::Misuse,
             other => Self::Unknown(other),
         }
+    }
+
+    /// Create from a raw `SQLite` result code.
+    ///
+    /// Returns `None` for `SQLITE_OK` (0) since that indicates success.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use diesel_sqlite_session::SqliteErrorCode;
+    ///
+    /// assert_eq!(SqliteErrorCode::from_raw(0), None);
+    /// assert_eq!(SqliteErrorCode::from_raw(5), Some(SqliteErrorCode::Busy));
+    /// ```
+    #[must_use]
+    pub const fn from_raw(code: i32) -> Option<Self> {
+        if code == 0 {
+            None
+        } else {
+            Some(Self::from_nonzero_raw(code))
+        }
+    }
+
+    /// Create from a non-zero `SQLite` error code.
+    ///
+    /// Use this when you've already verified the code is not `SQLITE_OK`.
+    /// Falls back to `Unknown(code)` if the code is 0 or unrecognized.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use diesel_sqlite_session::SqliteErrorCode;
+    ///
+    /// assert_eq!(SqliteErrorCode::from_error(21), SqliteErrorCode::Misuse);
+    /// assert_eq!(SqliteErrorCode::from_error(1234), SqliteErrorCode::Unknown(1234));
+    /// ```
+    #[must_use]
+    pub const fn from_error(code: i32) -> Self {
+        Self::from_nonzero_raw(code)
     }
 
     /// Get the raw `SQLite` result code.
@@ -143,6 +158,10 @@ pub enum ApplyError {
     /// The conflict handler returned [`ConflictAction::Abort`].
     #[error("Conflict handler requested abort")]
     ConflictAborted,
+
+    /// The conflict handler panicked while resolving a conflict.
+    #[error("Conflict handler panicked")]
+    ConflictHandlerPanicked,
 }
 
 /// Types of conflicts that can occur when applying changes.
@@ -165,6 +184,15 @@ pub enum ConflictType {
 
 impl ConflictType {
     /// Create a `ConflictType` from an `SQLite` conflict code.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use diesel_sqlite_session::ConflictType;
+    ///
+    /// assert_eq!(ConflictType::from_raw(1), Some(ConflictType::Data));
+    /// assert_eq!(ConflictType::from_raw(42), None);
+    /// ```
     #[must_use]
     pub const fn from_raw(code: i32) -> Option<Self> {
         match code {
@@ -200,6 +228,16 @@ pub enum ConflictAction {
 
 impl ConflictAction {
     /// Convert to the raw `SQLite` conflict resolution code.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use diesel_sqlite_session::ConflictAction;
+    ///
+    /// assert_eq!(ConflictAction::Omit.to_raw(), 0);
+    /// assert_eq!(ConflictAction::Replace.to_raw(), 1);
+    /// assert_eq!(ConflictAction::Abort.to_raw(), 2);
+    /// ```
     #[must_use]
     pub const fn to_raw(self) -> i32 {
         self as i32
@@ -275,6 +313,16 @@ mod tests {
                 SqliteErrorCode::from_error(99),
                 SqliteErrorCode::Unknown(99)
             );
+        }
+
+        #[test]
+        fn from_raw_and_from_error_are_consistent_for_nonzero_codes() {
+            for code in [-1, 1, 2, 3, 5, 6, 7, 8, 17, 21, 99] {
+                assert_eq!(
+                    SqliteErrorCode::from_raw(code),
+                    Some(SqliteErrorCode::from_error(code))
+                );
+            }
         }
 
         #[test]
@@ -374,6 +422,12 @@ mod tests {
         fn display_conflict_aborted() {
             let err = ApplyError::ConflictAborted;
             assert_eq!(err.to_string(), "Conflict handler requested abort");
+        }
+
+        #[test]
+        fn display_conflict_handler_panicked() {
+            let err = ApplyError::ConflictHandlerPanicked;
+            assert_eq!(err.to_string(), "Conflict handler panicked");
         }
 
         #[test]
