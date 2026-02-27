@@ -21,13 +21,11 @@ include = [
     "README.md",
     "LICENSE",
 ]
-# Publishing blocked until diesel-rs/diesel#4966 is merged (exposes `with_raw_connection` API)
-# Once merged, change diesel dependency from git to crates.io version
+# Publishing blocked until Diesel ships a crates.io release that includes #4966.
 publish = false
 
 [dependencies]
-# Using fork with `with_raw_connection` API until diesel-rs/diesel#4966 is merged
-diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite-session-changeset", features = ["sqlite"] }
+diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite"] }
 thiserror = "2"
 
 # Native targets: use libsqlite3-sys
@@ -39,7 +37,7 @@ libsqlite3-sys = { version = "0.36", features = ["bundled", "session"] }
 sqlite-wasm-rs = "0.5"
 
 [dev-dependencies]
-diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite-session-changeset", features = ["sqlite"] }
+diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
 rusqlite = { version = "0.38", features = ["bundled", "session", "buildtime_bindgen"] }
 

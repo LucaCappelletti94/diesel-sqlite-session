@@ -8,12 +8,7 @@
 
 This crate provides `SQLite` [session extension](https://sqlite.org/sessionintro.html) support for Diesel, enabling tracking of database changes and generation of transferable changesets/patchsets for replication, sync, and audit purposes.
 
-> **Note**: This crate requires access to Diesel's raw `SQLite` connection handle via `with_raw_connection`. Until [diesel#4966](https://github.com/diesel-rs/diesel/pull/4966) is merged, you must use a fork that exposes this API:
->
-> ```toml
-> [dependencies]
-> diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite-session-changeset", features = ["sqlite"] }
-> ```
+> **Note**: Support depends on Diesel's `with_raw_connection` (added in [diesel#4966](https://github.com/diesel-rs/diesel/pull/4966)). Since this is merged but not yet released, use Diesel from the upstream git repo.
 
 ## Features
 
@@ -31,8 +26,7 @@ Add to your `Cargo.toml`:
 ```toml
 [dependencies]
 diesel-sqlite-session = { git = "https://github.com/LucaCappelletti94/diesel-sqlite-session" }
-# Required until diesel#4966 is merged:
-diesel = { git = "https://github.com/LucaCappelletti94/diesel", branch = "sqlite-session-changeset", features = ["sqlite"] }
+diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite"] }
 ```
 
 ## Quick Start
@@ -202,7 +196,7 @@ Benchmarks run using Criterion on native targets with LTO and single codegen uni
 
 #### Patchset/Changeset Generation
 
-| Rows | Patchset (mean ± std) | Changeset (mean ± std) | Throughput |
+| Rows | Patchset (mean ± std)  | Changeset (mean ± std) | Throughput |
 |------|------------------------|------------------------|------------|
 | 10 | 82 ± 1 µs | 85 ± 1 µs | 120K rows/sec |
 | 100 | 285 ± 3 µs | 278 ± 2 µs | 355K rows/sec |
@@ -210,7 +204,7 @@ Benchmarks run using Criterion on native targets with LTO and single codegen uni
 
 #### Apply Operations
 
-| Rows | Apply Patchset (mean ± std) | Apply Changeset (mean ± std) | Throughput |
+| Rows | Apply Patchset (mean ± std)  | Apply Changeset (mean ± std) | Throughput |
 |------|------------------------------|------------------------------|------------|
 | 10 | 66 ± 1 µs | 64 ± 1 µs | 154K rows/sec |
 | 100 | 110 ± 1 µs | 110 ± 1 µs | 910K rows/sec |
