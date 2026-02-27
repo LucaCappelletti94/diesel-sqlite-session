@@ -4,7 +4,7 @@
 
 use diesel::prelude::*;
 use diesel::sql_query;
-use diesel_sqlite_session::{ConflictAction, SqliteSessionExt};
+use diesel_sqlite_session::{ApplyError, ConflictAction, SessionError, SqliteSessionExt};
 
 diesel::table! {
     items (id) {
@@ -440,6 +440,72 @@ fn test_conflict_omit_preserves_original() {
 }
 
 #[test]
+fn test_conflict_abort_returns_error() {
+    let mut source = setup_connection();
+    let mut session = source.create_session().unwrap();
+    session.attach::<items::table>().unwrap();
+
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Source",
+            quantity: Some(100),
+        })
+        .execute(&mut source)
+        .unwrap();
+
+    let patchset = session.patchset().unwrap();
+
+    let mut replica = setup_connection();
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Replica",
+            quantity: Some(999),
+        })
+        .execute(&mut replica)
+        .unwrap();
+
+    let result = replica.apply_patchset(&patchset, |_| ConflictAction::Abort);
+    assert!(matches!(result, Err(ApplyError::ConflictAborted)));
+}
+
+#[test]
+fn test_conflict_handler_panic_returns_typed_error() {
+    let mut source = setup_connection();
+    let mut session = source.create_session().unwrap();
+    session.attach::<items::table>().unwrap();
+
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Source",
+            quantity: Some(100),
+        })
+        .execute(&mut source)
+        .unwrap();
+    let patchset = session.patchset().unwrap();
+
+    let mut replica = setup_connection();
+    diesel::insert_into(items::table)
+        .values(NewItem {
+            id: 1,
+            name: "Replica",
+            quantity: Some(999),
+        })
+        .execute(&mut replica)
+        .unwrap();
+
+    let wrapped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        replica.apply_patchset(&patchset, |_| panic!("intentional panic"))
+    }));
+
+    assert!(wrapped.is_ok(), "panic must not unwind across FFI callback");
+    let result = wrapped.unwrap();
+    assert!(matches!(result, Err(ApplyError::ConflictHandlerPanicked)));
+}
+
+#[test]
 fn test_delete_replication() {
     let mut source = setup_connection();
 
@@ -622,6 +688,15 @@ fn test_attach_nonexistent_table() {
     // The error would occur when trying to track changes
     let result = session.attach_by_name("nonexistent_table");
     assert!(result.is_ok());
+}
+
+#[test]
+fn test_attach_by_name_rejects_null_byte() {
+    let mut conn = setup_connection();
+    let mut session = conn.create_session().unwrap();
+
+    let result = session.attach_by_name("bad\0table");
+    assert!(matches!(result, Err(SessionError::InvalidTableName)));
 }
 
 #[test]
