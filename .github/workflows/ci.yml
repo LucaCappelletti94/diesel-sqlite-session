@@ -257,6 +257,44 @@ jobs:
             xcrun simctl delete "$SIMULATOR_UDID" || true
           fi
 
+  # Execute Android emulator tests for merge queue and release pipelines.
+  android-test:
+    name: Android Emulator Tests
+    if: github.event_name == 'merge_group' || github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - name: Setup Android NDK
+        id: setup-ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: Install cargo-ndk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run Android emulator tests
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: cargo ndk-test -t x86_64 -p diesel-sqlite-session --lib --locked
+
   # Coverage (optional, can be commented out if not needed)
   coverage:
     name: Code Coverage
@@ -295,6 +333,7 @@ jobs:
       - wasm-build
       - mobile-build
       - ios
+      - android-test
       - coverage
     steps:
       - name: Verify required job status
