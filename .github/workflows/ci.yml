@@ -198,9 +198,9 @@ jobs:
       - name: Check mobile build
         run: cargo check -p diesel-sqlite-session --lib --target ${{ matrix.target }}
 
-  # Execute iOS smoke tests on simulator for merge queue and release pipelines.
-  ios-smoke:
-    name: iOS Simulator Smoke Execution
+  # Execute iOS simulator tests for merge queue and release pipelines.
+  ios:
+    name: iOS Simulator Tests
     if: github.event_name == 'merge_group' || github.event_name == 'release'
     runs-on: macos-latest
     timeout-minutes: 45
@@ -208,23 +208,54 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios-sim
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - uses: Swatinem/rust-cache@v2
       - name: Show Xcode version
         run: xcodebuild -version
-      - name: Build Rust static library for iOS simulator smoke harness
+      - name: Check iOS device target build
+        run: cargo check -p diesel-sqlite-session --target aarch64-apple-ios
+      - name: Boot iOS simulator
         run: |
-          cargo rustc -p diesel-sqlite-session --target aarch64-apple-ios-sim --features mobile-smoke --crate-type staticlib --release
-          echo "RUST_SMOKE_LIB_DIR=${PWD}/target/aarch64-apple-ios-sim/release" >> "$GITHUB_ENV"
-      - name: Run iOS simulator smoke tests
-        run: scripts/ci/run-ios-smoke-tests.sh
-      - name: Upload iOS smoke xcresult artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-smoke-xcresult
-          path: mobile-tests/ios-smoke/DerivedData/Logs/Test/*.xcresult
-          if-no-files-found: ignore
+          RUNTIME_JSON="$(xcrun simctl list runtimes --json \
+            | jq -c '.runtimes
+              | map(select(.isAvailable == true))
+              | map(select(.name | contains("iOS")))
+              | .[-1]')"
+          RUNTIME_ID="$(echo "$RUNTIME_JSON" | jq -r '.identifier')"
+          DEVICE_TYPE_ID="$(echo "$RUNTIME_JSON" \
+            | jq -r '.supportedDeviceTypes
+              | map(select(.productFamily == "iPhone"))
+              | .[0].identifier')"
+
+          if [ -z "$RUNTIME_ID" ] || [ "$RUNTIME_ID" = "null" ]; then
+            echo "No available iOS simulator runtime found"
+            exit 1
+          fi
+          if [ -z "$DEVICE_TYPE_ID" ] || [ "$DEVICE_TYPE_ID" = "null" ]; then
+            echo "No available iPhone simulator device type found"
+            exit 1
+          fi
+
+          SIM_UDID="$(xcrun simctl create ci-rust-ios "$DEVICE_TYPE_ID" "$RUNTIME_ID")"
+          echo "SIMULATOR_UDID=$SIM_UDID" >> "$GITHUB_ENV"
+          echo "Selected runtime: $RUNTIME_ID"
+          echo "Selected device type: $DEVICE_TYPE_ID"
+          echo "Created simulator: $SIM_UDID"
+
+          xcrun simctl boot "$SIM_UDID"
+          xcrun simctl bootstatus "$SIM_UDID" -b
+      - name: Run iOS simulator tests
+        run: cargo test -p diesel-sqlite-session --target aarch64-apple-ios-sim --locked
+        env:
+          CARGO_TARGET_AARCH64_APPLE_IOS_SIM_RUNNER: >-
+            xcrun simctl spawn ${{ env.SIMULATOR_UDID }}
+      - name: Cleanup iOS simulator
+        if: always()
+        run: |
+          if [ -n "${SIMULATOR_UDID:-}" ]; then
+            xcrun simctl shutdown "$SIMULATOR_UDID" || true
+            xcrun simctl delete "$SIMULATOR_UDID" || true
+          fi
 
   # Coverage (optional, can be commented out if not needed)
   coverage:
@@ -263,7 +294,7 @@ jobs:
       - audit
       - wasm-build
       - mobile-build
-      - ios-smoke
+      - ios
       - coverage
     steps:
       - name: Verify required job status

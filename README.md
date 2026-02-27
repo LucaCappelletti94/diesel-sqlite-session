@@ -181,22 +181,34 @@ replica.apply_patchset(&patchset, |conflict_type| {
 | Linux/macOS/Windows | `libsqlite3-sys` (bundled) | Supported |
 | WebAssembly | `sqlite-wasm-rs` | Supported |
 
-## iOS Simulator Smoke Tests
+## iOS Simulator Tests
 
-CI runs iOS execution smoke tests only for **merge queue** and **release** pipelines.
-Regular PRs keep mobile checks at compile level to reduce runtime and flakiness.
+CI runs iOS simulator execution tests only for **merge queue** and **release**
+pipelines. Regular PRs keep mobile checks at compile level to reduce runtime and
+flakiness.
 
-To run the iOS simulator smoke harness locally:
+To run iOS simulator tests locally:
 
 ```bash
-cargo rustc -p diesel-sqlite-session \
-  --target aarch64-apple-ios-sim \
-  --features mobile-smoke \
-  --crate-type staticlib \
-  --release
+RUNTIME_JSON="$(xcrun simctl list runtimes --json \
+  | jq -c '.runtimes
+    | map(select(.isAvailable == true))
+    | map(select(.name | contains("iOS")))
+    | .[-1]')"
+RUNTIME_ID="$(echo "$RUNTIME_JSON" | jq -r '.identifier')"
+DEVICE_TYPE_ID="$(echo "$RUNTIME_JSON" \
+  | jq -r '.supportedDeviceTypes
+    | map(select(.productFamily == "iPhone"))
+    | .[0].identifier')"
+SIM_UDID="$(xcrun simctl create ci-rust-ios "$DEVICE_TYPE_ID" "$RUNTIME_ID")"
+xcrun simctl boot "$SIM_UDID"
+xcrun simctl bootstatus "$SIM_UDID" -b
 
-export RUST_SMOKE_LIB_DIR="$PWD/target/aarch64-apple-ios-sim/release"
-scripts/ci/run-ios-smoke-tests.sh
+CARGO_TARGET_AARCH64_APPLE_IOS_SIM_RUNNER="xcrun simctl spawn $SIM_UDID" \
+  cargo test -p diesel-sqlite-session --target aarch64-apple-ios-sim
+
+xcrun simctl shutdown "$SIM_UDID"
+xcrun simctl delete "$SIM_UDID"
 ```
 
 ## Benchmarks
