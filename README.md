@@ -17,7 +17,7 @@ This crate provides `SQLite` [session extension](https://sqlite.org/sessionintro
 - **Replication support**: Apply changesets/patchsets to replica databases
 - **Conflict handling**: Configurable conflict resolution strategies
 - **Type-safe API**: Attach tables using Diesel's table types
-- **Cross-platform**: Supports native targets and WebAssembly
+- **Cross-platform**: Supports Linux/macOS/Windows, iOS, Android, and WebAssembly
 
 ## Installation
 
@@ -178,14 +178,14 @@ replica.apply_patchset(&patchset, |conflict_type| {
 
 | Platform | Backend | Status |
 |----------|---------|--------|
-| Linux/macOS/Windows | `libsqlite3-sys` (bundled) | Supported |
-| WebAssembly | `sqlite-wasm-rs` | Supported |
+| Linux/macOS/Windows | `libsqlite3-sys` (bundled) | Supported, tested in CI |
+| iOS (simulator + device build) | `libsqlite3-sys` (bundled) | Supported, simulator runtime-tested in CI |
+| Android (emulator + target builds) | `libsqlite3-sys` (bundled) | Supported, emulator runtime-tested in CI |
+| WebAssembly | `sqlite-wasm-rs` | Supported, tested in CI |
 
 ## iOS Simulator Tests
 
-CI runs iOS simulator execution tests only for **merge queue** and **release**
-pipelines. Regular PRs keep mobile checks at compile level to reduce runtime and
-flakiness.
+CI runs iOS simulator execution tests on standard CI runs (push/PR), in addition to merge-queue and release pipelines.
 
 To run iOS simulator tests locally:
 
@@ -213,9 +213,7 @@ xcrun simctl delete "$SIM_UDID"
 
 ## Android Emulator Tests
 
-CI runs Android emulator execution tests only for **merge queue** and
-**release** pipelines. The workflow uses `cargo ndk-test` against an
-`x86_64` Android emulator.
+CI runs Android emulator execution tests on standard CI runs (push/PR), in addition to merge-queue and release pipelines. The workflow uses `cargo ndk-test` against an `x86_64` Android emulator.
 
 ## Benchmarks
 
