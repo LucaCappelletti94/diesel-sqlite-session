@@ -198,10 +198,9 @@ jobs:
       - name: Check mobile build
         run: cargo check -p diesel-sqlite-session --lib --target ${{ matrix.target }}
 
-  # Execute iOS simulator tests for merge queue and release pipelines.
+  # Execute iOS simulator tests on every CI trigger.
   ios:
     name: iOS Simulator Tests
-    if: github.event_name == 'merge_group' || github.event_name == 'release'
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -257,10 +256,9 @@ jobs:
             xcrun simctl delete "$SIMULATOR_UDID" || true
           fi
 
-  # Execute Android emulator tests for merge queue and release pipelines.
+  # Execute Android emulator tests on every CI trigger.
   android-test:
     name: Android Emulator Tests
-    if: github.event_name == 'merge_group' || github.event_name == 'release'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
