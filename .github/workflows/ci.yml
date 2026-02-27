@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  merge_group:
+    branches: [main]
+  release:
+    types: [published, prereleased]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -187,6 +198,34 @@ jobs:
       - name: Check mobile build
         run: cargo check -p diesel-sqlite-session --lib --target ${{ matrix.target }}
 
+  # Execute iOS smoke tests on simulator for merge queue and release pipelines.
+  ios-smoke:
+    name: iOS Simulator Smoke Execution
+    if: github.event_name == 'merge_group' || github.event_name == 'release'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Build Rust static library for iOS simulator smoke harness
+        run: |
+          cargo rustc -p diesel-sqlite-session --target aarch64-apple-ios-sim --features mobile-smoke --crate-type staticlib --release
+          echo "RUST_SMOKE_LIB_DIR=${PWD}/target/aarch64-apple-ios-sim/release" >> "$GITHUB_ENV"
+      - name: Run iOS simulator smoke tests
+        run: scripts/ci/run-ios-smoke-tests.sh
+      - name: Upload iOS smoke xcresult artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-smoke-xcresult
+          path: mobile-tests/ios-smoke/DerivedData/Logs/Test/*.xcresult
+          if-no-files-found: ignore
+
   # Coverage (optional, can be commented out if not needed)
   coverage:
     name: Code Coverage
@@ -208,3 +247,28 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  required:
+    name: Required Checks
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    needs:
+      - fmt
+      - clippy
+      - test
+      - wasm
+      - docs
+      - miri
+      - asan
+      - audit
+      - wasm-build
+      - mobile-build
+      - ios-smoke
+      - coverage
+    steps:
+      - name: Verify required job status
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          echo "${NEEDS_JSON}" | jq -C .
+          echo "${NEEDS_JSON}" | jq -e 'all(.[]; .result == "success" or .result == "skipped")'
