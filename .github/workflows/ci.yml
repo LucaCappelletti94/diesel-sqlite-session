@@ -90,6 +90,40 @@ jobs:
         env:
           RUSTDOCFLAGS: -Dwarnings
 
+  # Miri checks for unsafe-heavy internal code paths
+  miri:
+    name: Miri (Core Unsafe Paths)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@v2
+      - name: Setup Miri
+        run: cargo miri setup
+      - name: Run Miri on error conversion logic
+        run: cargo miri test -p diesel-sqlite-session --lib errors::
+      - name: Run Miri on apply callback logic
+        run: cargo miri test -p diesel-sqlite-session --lib apply::tests::
+
+  # AddressSanitizer checks for unsafe-heavy internal code paths
+  asan:
+    name: ASan (Core Unsafe Paths)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: -Zsanitizer=address
+      RUSTDOCFLAGS: -Zsanitizer=address
+      ASAN_OPTIONS: detect_leaks=1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Run ASan on apply callback tests
+        run: cargo test -Zbuild-std --target x86_64-unknown-linux-gnu -p diesel-sqlite-session --lib apply::tests::
+
   # Security audit
   audit:
     name: Security Audit
@@ -112,6 +146,46 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build for WASM
         run: cargo build --target wasm32-unknown-unknown -p diesel-sqlite-session
+
+  # Check that the crate compiles for mobile targets (without runtime execution)
+  mobile-build:
+    name: Mobile Build Check (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: iOS Device (arm64)
+            os: macos-latest
+            target: aarch64-apple-ios
+          - name: iOS Simulator (arm64)
+            os: macos-latest
+            target: aarch64-apple-ios-sim
+          - name: Android (arm64)
+            os: ubuntu-latest
+            target: aarch64-linux-android
+            setup_android_ndk: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Android NDK
+        if: matrix.setup_android_ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+
+      - name: Configure Android toolchain env
+        if: matrix.setup_android_ndk
+        run: |
+          echo "CC_aarch64_linux_android=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> "$GITHUB_ENV"
+          echo "AR_aarch64_linux_android=${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" >> "$GITHUB_ENV"
+
+      - name: Check mobile build
+        run: cargo check -p diesel-sqlite-session --lib --target ${{ matrix.target }}
 
   # Coverage (optional, can be commented out if not needed)
   coverage:
