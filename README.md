@@ -181,6 +181,24 @@ replica.apply_patchset(&patchset, |conflict_type| {
 | Linux/macOS/Windows | `libsqlite3-sys` (bundled) | Supported |
 | WebAssembly | `sqlite-wasm-rs` | Supported |
 
+## iOS Simulator Smoke Tests
+
+CI runs iOS execution smoke tests only for **merge queue** and **release** pipelines.
+Regular PRs keep mobile checks at compile level to reduce runtime and flakiness.
+
+To run the iOS simulator smoke harness locally:
+
+```bash
+cargo rustc -p diesel-sqlite-session \
+  --target aarch64-apple-ios-sim \
+  --features mobile-smoke \
+  --crate-type staticlib \
+  --release
+
+export RUST_SMOKE_LIB_DIR="$PWD/target/aarch64-apple-ios-sim/release"
+scripts/ci/run-ios-smoke-tests.sh
+```
+
 ## Benchmarks
 
 ### Native Performance (Linux `x86_64`)
