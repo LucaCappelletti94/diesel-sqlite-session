@@ -211,6 +211,12 @@ xcrun simctl shutdown "$SIM_UDID"
 xcrun simctl delete "$SIM_UDID"
 ```
 
+## Android Emulator Tests
+
+CI runs Android emulator execution tests only for **merge queue** and
+**release** pipelines. The workflow uses `cargo ndk-test` against an
+`x86_64` Android emulator.
+
 ## Benchmarks
 
 ### Native Performance (Linux `x86_64`)
