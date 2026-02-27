@@ -5,6 +5,11 @@
 mod apply;
 mod errors;
 mod ffi;
+#[cfg(all(
+    feature = "mobile-smoke",
+    not(all(target_family = "wasm", target_os = "unknown"))
+))]
+mod mobile_smoke;
 mod session;
 
 pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError, SqliteErrorCode};
