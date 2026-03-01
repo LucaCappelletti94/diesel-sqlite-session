@@ -42,26 +42,33 @@ diesel::table! {
     }
 }
 
-// Create source connection and track changes
+#[derive(Insertable)]
+#[diesel(table_name = users)]
+struct NewUser<'a> {
+    id: i32,
+    name: &'a str,
+}
+
+// Create source connection and track changes.
+// Assume the `users` table already exists (for example via Diesel migrations).
 let mut source = SqliteConnection::establish(":memory:").unwrap();
-diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
-    .execute(&mut source).unwrap();
 
 // Create a session and attach the table
 let mut session = source.create_session().unwrap();
 session.attach::<users::table>().unwrap();
 
 // Make changes
-diesel::sql_query("INSERT INTO users (id, name) VALUES (1, 'Alice')")
-    .execute(&mut source).unwrap();
+diesel::insert_into(users::table)
+    .values(NewUser { id: 1, name: "Alice" })
+    .execute(&mut source)
+    .unwrap();
 
 // Generate patchset
 let patchset = session.patchset().unwrap();
 
 // Apply to replica
+// Assume the same schema/migrations are already applied on the replica.
 let mut replica = SqliteConnection::establish(":memory:").unwrap();
-diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
-    .execute(&mut replica).unwrap();
 
 replica.apply_patchset(&patchset, |_| ConflictAction::Abort).unwrap();
 ```
@@ -76,17 +83,32 @@ The `SqliteSessionExt` trait extends `SqliteConnection` with session capabilitie
 use diesel::prelude::*;
 use diesel_sqlite_session::{SqliteSessionExt, ConflictAction};
 
+diesel::table! {
+    t (id) {
+        id -> Integer,
+    }
+}
+
+#[derive(Insertable)]
+#[diesel(table_name = t)]
+struct NewRow {
+    id: i32,
+}
+
 let mut conn = SqliteConnection::establish(":memory:").unwrap();
-diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY)").execute(&mut conn).unwrap();
+// Assume table `t` already exists (for example via Diesel migrations).
 
 let mut session = conn.create_session().unwrap();
 session.attach_by_name("t").unwrap();
-diesel::sql_query("INSERT INTO t VALUES (1)").execute(&mut conn).unwrap();
+diesel::insert_into(t::table)
+    .values(NewRow { id: 1 })
+    .execute(&mut conn)
+    .unwrap();
 let patchset = session.patchset().unwrap();
 
 // Apply to another connection
 let mut conn2 = SqliteConnection::establish(":memory:").unwrap();
-diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY)").execute(&mut conn2).unwrap();
+// Assume same schema/migrations were applied to `conn2`.
 conn2.apply_patchset(&patchset, |_| ConflictAction::Abort).unwrap();
 ```
 
@@ -104,7 +126,7 @@ diesel::table! {
 }
 
 let mut conn = SqliteConnection::establish(":memory:").unwrap();
-diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)").execute(&mut conn).unwrap();
+// Assume table `users` already exists (for example via Diesel migrations).
 
 let mut session = conn.create_session().unwrap();
 
@@ -118,7 +140,10 @@ session.attach::<users::table>().unwrap();
 // session.attach_by_name("dynamic_table").unwrap();
 
 // Make some changes
-diesel::sql_query("INSERT INTO users VALUES (1, 'Alice')").execute(&mut conn).unwrap();
+diesel::insert_into(users::table)
+    .values((users::id.eq(1), users::name.eq(Some("Alice"))))
+    .execute(&mut conn)
+    .unwrap();
 
 // Generate output
 let patchset = session.patchset().unwrap();   // Smaller, new values only
@@ -139,17 +164,31 @@ When applying changesets/patchsets, conflicts are handled via callback:
 use diesel::prelude::*;
 use diesel_sqlite_session::{SqliteSessionExt, ConflictAction, ConflictType};
 
+diesel::table! {
+    t (id) {
+        id -> Integer,
+        v -> Integer,
+    }
+}
+
 // Create source and generate patchset
 let mut source = SqliteConnection::establish(":memory:").unwrap();
-diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").execute(&mut source).unwrap();
+// Assume table `t` already exists (for example via Diesel migrations).
 let mut session = source.create_session().unwrap();
-session.attach_by_name("t").unwrap();
-diesel::sql_query("INSERT INTO t VALUES (1, 100)").execute(&mut source).unwrap();
+session.attach::<t::table>().unwrap();
+diesel::insert_into(t::table)
+    .values((t::id.eq(1), t::v.eq(100)))
+    .execute(&mut source)
+    .unwrap();
 let patchset = session.patchset().unwrap();
 
 // Apply with conflict handling
 let mut replica = SqliteConnection::establish(":memory:").unwrap();
-diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)").execute(&mut replica).unwrap();
+// Assume same schema/migrations were applied to `replica`.
+diesel::insert_into(t::table)
+    .values((t::id.eq(1), t::v.eq(999)))
+    .execute(&mut replica)
+    .unwrap();
 
 replica.apply_patchset(&patchset, |conflict_type| {
     match conflict_type {
