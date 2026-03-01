@@ -293,6 +293,63 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: cargo ndk-test -t x86_64 -p diesel-sqlite-session --lib --locked
 
+  # Native runtime tests on ARM64 Linux runners.
+  linux-arm64:
+    name: Linux ARM64 Runtime Tests
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Verify host architecture
+        run: rustc -vV
+      - name: Run tests
+        run: cargo test -p diesel-sqlite-session --verbose --locked
+      - name: Check benchmarks compile
+        run: cargo test -p diesel-sqlite-session --benches --no-run --locked
+
+  # Cross-target link/build checks for common edge Linux targets.
+  edge-cross-link-check:
+    name: Edge Cross Link Check (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-musl
+          - armv7-unknown-linux-gnueabihf
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+      - name: Cross test build (no-run)
+        run: |
+          cross test \
+            --target ${{ matrix.target }} \
+            -p diesel-sqlite-session \
+            --no-run \
+            --locked
+
+  # Link checks for Windows ARM64 builds used on edge/mobile-class hardware.
+  windows-arm64-link-check:
+    name: Windows ARM64 Link Check
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - name: Test build (no-run)
+        run: cargo test -p diesel-sqlite-session --target aarch64-pc-windows-msvc --no-run --locked
+
   # Coverage (optional, can be commented out if not needed)
   coverage:
     name: Code Coverage
@@ -332,6 +389,9 @@ jobs:
       - mobile-build
       - ios
       - android-test
+      - linux-arm64
+      - edge-cross-link-check
+      - windows-arm64-link-check
       - coverage
     steps:
       - name: Verify required job status
