@@ -179,6 +179,9 @@ replica.apply_patchset(&patchset, |conflict_type| {
 | Platform | Backend | Status |
 |----------|---------|--------|
 | Linux/macOS/Windows | `libsqlite3-sys` (bundled) | Supported, tested in CI |
+| Linux ARM64 (native runner) | `libsqlite3-sys` (bundled) | Supported, runtime-tested in CI |
+| Linux edge targets (`musl`, `armv7`) | `libsqlite3-sys` (bundled) | Supported, cross-link/build checked in CI |
+| Windows ARM64 | `libsqlite3-sys` (bundled) | Supported, link/build checked in CI |
 | iOS (simulator + device build) | `libsqlite3-sys` (bundled) | Supported, simulator runtime-tested in CI |
 | Android (emulator + target builds) | `libsqlite3-sys` (bundled) | Supported, emulator runtime-tested in CI |
 | WebAssembly | `sqlite-wasm-rs` | Supported, tested in CI |
@@ -214,6 +217,14 @@ xcrun simctl delete "$SIM_UDID"
 ## Android Emulator Tests
 
 CI runs Android emulator execution tests on standard CI runs (push/PR), in addition to merge-queue and release pipelines. The workflow uses `cargo ndk-test` against an `x86_64` Android emulator.
+
+## Edge Device Verification
+
+In addition to iOS and Android runtime jobs, CI also validates edge-device compatibility with:
+
+- Native `aarch64` Linux runtime tests on `ubuntu-24.04-arm`
+- Cross-target `--no-run` checks on `aarch64-unknown-linux-musl` and `armv7-unknown-linux-gnueabihf`
+- Windows ARM64 `--no-run` checks on `aarch64-pc-windows-msvc`
 
 ## Benchmarks
 
