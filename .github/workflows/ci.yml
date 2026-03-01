@@ -351,13 +351,16 @@ jobs:
             sudo rm -f /etc/apt/sources.list.d/azure-cli.list
           fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gcc-arm-linux-gnueabihf
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-linux-gnueabihf \
+            libc6-dev-armhf-cross
       - name: ARMv7 test build (no-run)
         run: cargo test -p diesel-sqlite-session --target armv7-unknown-linux-gnueabihf --no-run --locked
         env:
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
           CC_armv7_unknown_linux_gnueabihf: arm-linux-gnueabihf-gcc
           AR_armv7_unknown_linux_gnueabihf: arm-linux-gnueabihf-ar
+          CFLAGS_armv7_unknown_linux_gnueabihf: --sysroot=/usr/arm-linux-gnueabihf
 
   # Link checks for Windows ARM64 builds used on edge/mobile-class hardware.
   windows-arm64-link-check:
