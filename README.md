@@ -50,8 +50,11 @@ struct NewUser<'a> {
 }
 
 // Create source connection and track changes.
-// Assume the `users` table already exists (for example via Diesel migrations).
 let mut source = SqliteConnection::establish(":memory:").unwrap();
+// Schema setup still requires SQL; Diesel ORM handles data operations.
+diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    .execute(&mut source)
+    .unwrap();
 
 // Create a session and attach the table
 let mut session = source.create_session().unwrap();
@@ -67,8 +70,10 @@ diesel::insert_into(users::table)
 let patchset = session.patchset().unwrap();
 
 // Apply to replica
-// Assume the same schema/migrations are already applied on the replica.
 let mut replica = SqliteConnection::establish(":memory:").unwrap();
+diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    .execute(&mut replica)
+    .unwrap();
 
 replica.apply_patchset(&patchset, |_| ConflictAction::Abort).unwrap();
 ```
@@ -96,7 +101,9 @@ struct NewRow {
 }
 
 let mut conn = SqliteConnection::establish(":memory:").unwrap();
-// Assume table `t` already exists (for example via Diesel migrations).
+diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    .execute(&mut conn)
+    .unwrap();
 
 let mut session = conn.create_session().unwrap();
 session.attach_by_name("t").unwrap();
@@ -108,7 +115,9 @@ let patchset = session.patchset().unwrap();
 
 // Apply to another connection
 let mut conn2 = SqliteConnection::establish(":memory:").unwrap();
-// Assume same schema/migrations were applied to `conn2`.
+diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY)")
+    .execute(&mut conn2)
+    .unwrap();
 conn2.apply_patchset(&patchset, |_| ConflictAction::Abort).unwrap();
 ```
 
@@ -126,7 +135,9 @@ diesel::table! {
 }
 
 let mut conn = SqliteConnection::establish(":memory:").unwrap();
-// Assume table `users` already exists (for example via Diesel migrations).
+diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+    .execute(&mut conn)
+    .unwrap();
 
 let mut session = conn.create_session().unwrap();
 
@@ -173,7 +184,9 @@ diesel::table! {
 
 // Create source and generate patchset
 let mut source = SqliteConnection::establish(":memory:").unwrap();
-// Assume table `t` already exists (for example via Diesel migrations).
+diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER NOT NULL)")
+    .execute(&mut source)
+    .unwrap();
 let mut session = source.create_session().unwrap();
 session.attach::<t::table>().unwrap();
 diesel::insert_into(t::table)
@@ -184,7 +197,9 @@ let patchset = session.patchset().unwrap();
 
 // Apply with conflict handling
 let mut replica = SqliteConnection::establish(":memory:").unwrap();
-// Assume same schema/migrations were applied to `replica`.
+diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER NOT NULL)")
+    .execute(&mut replica)
+    .unwrap();
 diesel::insert_into(t::table)
     .values((t::id.eq(1), t::v.eq(999)))
     .execute(&mut replica)
@@ -194,7 +209,7 @@ replica.apply_patchset(&patchset, |conflict_type| {
     match conflict_type {
         ConflictType::Data => ConflictAction::Replace,    // Overwrite
         ConflictType::NotFound => ConflictAction::Omit,   // Skip
-        ConflictType::Conflict => ConflictAction::Abort,  // Stop
+        ConflictType::Conflict => ConflictAction::Replace,
         _ => ConflictAction::Abort,
     }
 }).unwrap();
