@@ -186,46 +186,6 @@ replica.apply_patchset(&patchset, |conflict_type| {
 | Android (emulator + target builds) | `libsqlite3-sys` (bundled) | Supported, emulator runtime-tested in CI |
 | WebAssembly | `sqlite-wasm-rs` | Supported, tested in CI |
 
-## iOS Simulator Tests
-
-CI runs iOS simulator execution tests on standard CI runs (push/PR), in addition to merge-queue and release pipelines.
-
-To run iOS simulator tests locally:
-
-```bash
-RUNTIME_JSON="$(xcrun simctl list runtimes --json \
-  | jq -c '.runtimes
-    | map(select(.isAvailable == true))
-    | map(select(.name | contains("iOS")))
-    | .[-1]')"
-RUNTIME_ID="$(echo "$RUNTIME_JSON" | jq -r '.identifier')"
-DEVICE_TYPE_ID="$(echo "$RUNTIME_JSON" \
-  | jq -r '.supportedDeviceTypes
-    | map(select(.productFamily == "iPhone"))
-    | .[0].identifier')"
-SIM_UDID="$(xcrun simctl create ci-rust-ios "$DEVICE_TYPE_ID" "$RUNTIME_ID")"
-xcrun simctl boot "$SIM_UDID"
-xcrun simctl bootstatus "$SIM_UDID" -b
-
-CARGO_TARGET_AARCH64_APPLE_IOS_SIM_RUNNER="xcrun simctl spawn $SIM_UDID" \
-  cargo test -p diesel-sqlite-session --target aarch64-apple-ios-sim
-
-xcrun simctl shutdown "$SIM_UDID"
-xcrun simctl delete "$SIM_UDID"
-```
-
-## Android Emulator Tests
-
-CI runs Android emulator execution tests on standard CI runs (push/PR), in addition to merge-queue and release pipelines. The workflow uses `cargo ndk-test` against an `x86_64` Android emulator.
-
-## Edge Device Verification
-
-In addition to iOS and Android runtime jobs, CI also validates edge-device compatibility with:
-
-- Native `aarch64` Linux runtime tests on `ubuntu-24.04-arm`
-- Cross-target `--no-run` checks on `aarch64-unknown-linux-musl` and `armv7-unknown-linux-gnueabihf`
-- Windows ARM64 `--no-run` checks on `aarch64-pc-windows-msvc`
-
 ## Benchmarks
 
 ### Native Performance (Linux `x86_64`)
