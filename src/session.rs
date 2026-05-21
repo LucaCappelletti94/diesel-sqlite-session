@@ -157,7 +157,7 @@ impl Session {
     /// Returns `SessionError::AttachFailed` if `SQLite` fails to attach.
     pub fn attach_all(&mut self) -> Result<(), SessionError> {
         // SAFETY: `self.session` is created by `sqlite3session_create` and remains valid
-        // for the lifetime of `Session`; passing null tracks all tables per SQLite API.
+        // for the lifetime of `Session`. Passing null tracks all tables per SQLite API.
         let rc = unsafe { sqlite3session_attach(self.session, ptr::null()) };
 
         if rc != SQLITE_OK {
@@ -257,8 +257,8 @@ impl Session {
             usize::try_from(size)
                 .map_err(|_| map_error(SqliteErrorCode::Unknown(size)))
                 .map(|byte_len| {
-                    // SAFETY: SQLite returned a non-null buffer with `byte_len` bytes;
-                    // we copy those bytes immediately into an owned `Vec<u8>`.
+                    // SAFETY: SQLite returned a non-null buffer with `byte_len` bytes,
+                    // and we copy those bytes immediately into an owned `Vec<u8>`.
                     let bytes =
                         unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), byte_len) };
                     bytes.to_vec()

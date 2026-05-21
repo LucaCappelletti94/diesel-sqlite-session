@@ -7,7 +7,7 @@ use thiserror::Error;
 /// `SQLite` result codes returned by the session extension.
 ///
 /// These correspond to `SQLite`'s [result codes](https://www.sqlite.org/rescode.html).
-/// Only codes relevant to session operations are enumerated; others are captured
+/// Only codes relevant to session operations are enumerated. Others are captured
 /// in the `Unknown` variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SqliteErrorCode {

@@ -104,7 +104,7 @@
 
   <!-- Architecture Section - Backend to Frontend Flow -->
   <g transform="translate(32, 226)">
-    <text x="0" y="0" class="section-title">Architecture — Backend CDC to Frontend via WebSocket</text>
+    <text x="0" y="0" class="section-title">Architecture: Backend CDC to Frontend via WebSocket</text>
 
     <g transform="translate(0, 18)">
       <rect width="836" height="200" rx="6" fill="#fff" stroke="#e2e8f0" stroke-width="1"/>
@@ -204,7 +204,7 @@
 
   <!-- Performance Section -->
   <g transform="translate(32, 476)">
-    <text x="0" y="0" class="section-title">Performance — Native &amp; WebAssembly</text>
+    <text x="0" y="0" class="section-title">Performance: Native &amp; WebAssembly</text>
 
     <g transform="translate(0, 18)">
       <!-- Native Performance: diesel-sqlite-session vs rusqlite -->
@@ -212,7 +212,7 @@
         <rect width="405" height="210" rx="6" fill="#fff" stroke="#16a34a" stroke-width="1.5"/>
         <rect width="405" height="28" rx="6" fill="#16a34a"/>
         <rect y="22" width="405" height="6" fill="#16a34a"/>
-        <text x="202" y="19" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">Native (Linux x86_64) — diesel vs rusqlite</text>
+        <text x="202" y="19" text-anchor="middle" font-size="12" font-weight="600" fill="#fff">Native (Linux x86_64): diesel vs rusqlite</text>
 
         <g transform="translate(8, 36)">
           <!-- Table structure with pastel green theme -->
@@ -283,7 +283,7 @@
         <!-- Summary -->
         <rect x="8" y="172" width="389" height="30" rx="3" fill="#ecfdf5" stroke="#86efac"/>
         <text x="202" y="185" text-anchor="middle" class="tiny" fill="#166534">diesel: 12-18% faster for data-heavy ops | ~5% overhead for setup</text>
-        <text x="202" y="196" text-anchor="middle" class="tiny" fill="#166534">Performance comparable; choose based on ORM preference</text>
+        <text x="202" y="196" text-anchor="middle" class="tiny" fill="#166534">Performance comparable, choose based on ORM preference</text>
       </g>
 
       <!-- WASM Performance - Chrome vs Firefox -->

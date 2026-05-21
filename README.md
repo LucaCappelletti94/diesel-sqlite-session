@@ -296,7 +296,7 @@ The session extension FFI calls are identical between diesel-sqlite-session and 
 
 For data-heavy operations (patchset/changeset generation, mixed operations, full replication), **diesel-sqlite-session is 12-18% faster** due to Diesel's efficient query builder and prepared statement handling.
 
-Performance should not be a factor in choosing between the two—use whichever ORM fits your project.
+Performance should not be a factor in choosing between the two. Use whichever ORM fits your project.
 
 #### Browser/WASM Support
 
