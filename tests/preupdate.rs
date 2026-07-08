@@ -656,6 +656,53 @@ fn session_after_dropping_preupdate_hook_still_records_changes() {
 }
 
 #[test]
+fn blob_write_reports_the_column_it_targets() {
+    use diesel_sqlite_session::{BlobMode, SqliteSessionExt as _};
+
+    let mut conn = fresh_connection();
+    sql_query(
+        "CREATE TABLE with_blob (id INTEGER PRIMARY KEY, name TEXT, payload BLOB, tail INTEGER)",
+    )
+    .execute(&mut conn)
+    .unwrap();
+    sql_query("INSERT INTO with_blob (id, name, payload, tail) VALUES (1, 'row', zeroblob(16), 7)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let events: Arc<Mutex<Vec<CapturedEvent>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = events.clone();
+    let hook = conn.on_preupdate(move |event| {
+        sink.lock().push(CapturedEvent::capture(&event));
+    });
+
+    // Writing through the incremental-BLOB API fires the pre-update hook once
+    // per write, reporting op = Delete and blob_write_column = Some(column
+    // index the handle was opened on). Column indexes are declared-order
+    // 0-based, so `payload` is column 2 here.
+    let blob = conn
+        .open_blob("main", "with_blob", "payload", 1, BlobMode::ReadWrite)
+        .expect("open handle");
+    blob.write_at(0, b"hello").expect("write succeeds");
+    blob.close().expect("close reports success");
+    drop(hook);
+
+    let captured = events.lock().clone();
+    let blob_events: Vec<&CapturedEvent> = captured
+        .iter()
+        .filter(|e| e.blob_write_column.is_some())
+        .collect();
+    assert!(
+        !blob_events.is_empty(),
+        "at least one event carries blob_write_column: got {captured:?}",
+    );
+    let event = blob_events[0];
+    assert_eq!(event.op, PreUpdateOp::Delete);
+    assert_eq!(event.database, "main");
+    assert_eq!(event.table, "with_blob");
+    assert_eq!(event.blob_write_column, Some(2));
+}
+
+#[test]
 fn nested_triggers_report_increasing_depth() {
     // Trigger chain: an INSERT into `top` fires an INSERT into `mid`, which
     // in turn fires an INSERT into `leaf`. SQLite's `sqlite3_preupdate_depth`

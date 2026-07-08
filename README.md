@@ -244,6 +244,35 @@ The callback receives a `PreUpdateEvent<'_>` bound to the callback frame. Values
 
 `PreUpdateHook` is an RAII guard. `SQLite` allows one hook per connection, so a second `on_preupdate` while a guard is alive replaces the callback and silently retires the older guard.
 
+### Incremental Blob I/O
+
+`SqliteBlob` wraps the `sqlite3_blob_*` family. Diesel already ships a read-only handle; this crate adds the read plus write pair so writes can raise the pre-update hook (`blob_write_column` reports the column index the handle was opened on).
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{BlobMode, SqliteSessionExt};
+
+let mut conn = SqliteConnection::establish(":memory:").unwrap();
+diesel::sql_query("CREATE TABLE photos (id INTEGER PRIMARY KEY, data BLOB)")
+    .execute(&mut conn)
+    .unwrap();
+diesel::sql_query("INSERT INTO photos (id, data) VALUES (1, zeroblob(16))")
+    .execute(&mut conn)
+    .unwrap();
+
+let blob = conn
+    .open_blob("main", "photos", "data", 1, BlobMode::ReadWrite)
+    .unwrap();
+assert_eq!(blob.len(), 16);
+blob.write_at(4, b"HelloBlob").unwrap();
+let mut echo = [0u8; 9];
+blob.read_at(4, &mut echo).unwrap();
+assert_eq!(&echo, b"HelloBlob");
+blob.close().unwrap();
+```
+
+`SqliteBlob` is `!Send + !Sync` and RAII with the same "drop before the connection" contract as `Session` and `PreUpdateHook`. `write_at` on a `ReadOnly` handle short-circuits to `BlobError::ReadOnly` without touching `SQLite`. `close(self)` surfaces the result of `sqlite3_blob_close`. `Drop` closes silently.
+
 ## Platform Support
 
 | Platform | Backend | Status |

@@ -6,7 +6,9 @@
 
 use diesel::prelude::*;
 use diesel::sql_query;
-use diesel_sqlite_session::{ConflictAction, PreUpdateColumnType, PreUpdateOp, SqliteSessionExt};
+use diesel_sqlite_session::{
+    BlobError, BlobMode, ConflictAction, PreUpdateColumnType, PreUpdateOp, SqliteSessionExt,
+};
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -500,4 +502,74 @@ async fn preupdate_then_session_cutover_wasm() {
         .apply_changeset(&changeset, |_| ConflictAction::Abort)
         .unwrap();
     assert_eq!(count_rows(&mut replica), 1);
+}
+
+#[wasm_bindgen_test]
+async fn blob_read_write_round_trip_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE photos_wasm (id INTEGER PRIMARY KEY, data BLOB)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO photos_wasm (id, data) VALUES (1, zeroblob(8))")
+        .execute(&mut conn)
+        .unwrap();
+
+    let blob = conn
+        .open_blob("main", "photos_wasm", "data", 1, BlobMode::ReadWrite)
+        .expect("open handle");
+    assert_eq!(blob.len(), 8);
+    blob.write_at(2, b"WASM").expect("write succeeds");
+    let mut echo = [0u8; 4];
+    blob.read_at(2, &mut echo).expect("read succeeds");
+    assert_eq!(&echo, b"WASM");
+    blob.close().expect("close succeeds");
+}
+
+#[wasm_bindgen_test]
+async fn blob_write_read_only_returns_read_only_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE ro_wasm (id INTEGER PRIMARY KEY, data BLOB)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO ro_wasm (id, data) VALUES (1, zeroblob(4))")
+        .execute(&mut conn)
+        .unwrap();
+
+    let blob = conn
+        .open_blob("main", "ro_wasm", "data", 1, BlobMode::ReadOnly)
+        .expect("open handle");
+    let err = blob.write_at(0, b"x").unwrap_err();
+    assert!(matches!(err, BlobError::ReadOnly));
+}
+
+#[wasm_bindgen_test]
+async fn blob_write_fires_preupdate_with_column_index_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE bw_wasm (id INTEGER PRIMARY KEY, name TEXT, data BLOB)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO bw_wasm (id, name, data) VALUES (1, 'row', zeroblob(4))")
+        .execute(&mut conn)
+        .unwrap();
+
+    let seen: Arc<Mutex<Vec<(PreUpdateOp, Option<u32>)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let hook = conn.on_preupdate(move |event| {
+        sink.lock().push((event.op(), event.blob_write_column()));
+    });
+
+    let blob = conn
+        .open_blob("main", "bw_wasm", "data", 1, BlobMode::ReadWrite)
+        .expect("open handle");
+    blob.write_at(0, b"abcd").expect("write succeeds");
+    blob.close().expect("close reports success");
+    drop(hook);
+
+    let observed = seen.lock().clone();
+    let blob_hit = observed
+        .iter()
+        .find(|(_, col)| col.is_some())
+        .expect("saw a blob-write event");
+    assert_eq!(blob_hit.0, PreUpdateOp::Delete);
+    assert_eq!(blob_hit.1, Some(2));
 }

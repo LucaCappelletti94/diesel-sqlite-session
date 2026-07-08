@@ -3,11 +3,13 @@
 #![allow(clippy::module_name_repetitions)]
 
 mod apply;
+mod blob;
 mod errors;
 mod ffi;
 mod preupdate;
 mod session;
 
+pub use blob::{BlobError, BlobMode, SqliteBlob};
 pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError, SqliteErrorCode};
 pub use preupdate::{
     PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateHook, PreUpdateOp, PreUpdateValue,
@@ -122,6 +124,24 @@ pub trait SqliteSessionExt {
     fn on_preupdate<F>(&mut self, hook: F) -> PreUpdateHook
     where
         F: FnMut(PreUpdateEvent<'_>) + Send + 'static;
+
+    /// Open an incremental blob handle over a single blob column. Writes
+    /// fire the pre-update hook with `op` = [`PreUpdateOp::Delete`](crate::PreUpdateOp)
+    /// and [`PreUpdateEvent::blob_write_column`] set to the column index
+    /// this handle was opened on.
+    ///
+    /// # Errors
+    ///
+    /// Any [`BlobError`] variant surfaced by `sqlite3_blob_open` or argument
+    /// validation.
+    fn open_blob(
+        &mut self,
+        database: &str,
+        table: &str,
+        column: &str,
+        rowid: i64,
+        mode: BlobMode,
+    ) -> Result<SqliteBlob, BlobError>;
 }
 
 impl SqliteSessionExt for SqliteConnection {
@@ -152,5 +172,17 @@ impl SqliteSessionExt for SqliteConnection {
         F: FnMut(PreUpdateEvent<'_>) + Send + 'static,
     {
         PreUpdateHook::install(self, hook)
+    }
+
+    #[inline]
+    fn open_blob(
+        &mut self,
+        database: &str,
+        table: &str,
+        column: &str,
+        rowid: i64,
+        mode: BlobMode,
+    ) -> Result<SqliteBlob, BlobError> {
+        SqliteBlob::open_internal(self, database, table, column, rowid, mode)
     }
 }
