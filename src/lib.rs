@@ -11,6 +11,7 @@ mod ffi;
 mod preupdate;
 mod session;
 mod streaming;
+mod transform;
 
 pub use apply_v2::{ApplyFlags, ApplyOutcome, ConflictInfo};
 pub use blob::{BlobError, BlobMode, SqliteBlob};
@@ -22,6 +23,9 @@ pub use preupdate::{
     PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateHook, PreUpdateOp, PreUpdateValue,
 };
 pub use session::{set_stream_size, stream_size, Session};
+pub use transform::{
+    concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm, Changegroup,
+};
 
 use diesel::SqliteConnection;
 

@@ -7,8 +7,9 @@
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    ApplyFlags, BlobError, BlobMode, ChangesetOp, ChangesetReader, ConflictAction, ConflictType,
-    PreUpdateColumnType, PreUpdateOp, SqliteSessionExt,
+    concat_changesets, invert_changeset, ApplyFlags, BlobError, BlobMode, Changegroup, ChangesetOp,
+    ChangesetReader, ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp,
+    SqliteSessionExt,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -807,4 +808,90 @@ async fn apply_changeset_strm_with_applies_wasm() {
         )
         .unwrap();
     assert_eq!(count_rows(&mut replica), 1);
+}
+
+#[wasm_bindgen_test]
+async fn invert_flips_insert_into_delete_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 7)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let inverted = invert_changeset(&bytes).expect("invert succeeds");
+
+    let mut reader = ChangesetReader::open(&inverted).unwrap();
+    let row = reader.next().expect("advance").expect("saw a row");
+    assert_eq!(row.op(), ChangesetOp::Delete);
+}
+
+#[wasm_bindgen_test]
+async fn concat_merges_two_disjoint_changesets_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut s = source.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'a', 1)")
+        .execute(&mut source)
+        .unwrap();
+    let a = s.changeset().unwrap();
+    drop(s);
+
+    let mut source2 = create_connection();
+    setup_table(&mut source2);
+    let mut s = source2.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'b', 2)")
+        .execute(&mut source2)
+        .unwrap();
+    let b = s.changeset().unwrap();
+    drop(s);
+
+    let combined = concat_changesets(&a, &b).expect("concat succeeds");
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset(&combined, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 2);
+}
+
+#[wasm_bindgen_test]
+async fn changegroup_aggregates_and_replays_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut s = source.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'first', 1)")
+        .execute(&mut source)
+        .unwrap();
+    let first = s.changeset().unwrap();
+    drop(s);
+
+    let mut source2 = create_connection();
+    setup_table(&mut source2);
+    let mut s = source2.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'second', 2)")
+        .execute(&mut source2)
+        .unwrap();
+    let second = s.changeset().unwrap();
+    drop(s);
+
+    let mut group = Changegroup::new().unwrap();
+    group.add(&first).unwrap();
+    group.add(&second).unwrap();
+    let merged = group.output().unwrap();
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset(&merged, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 2);
 }

@@ -8,7 +8,8 @@ use std::io::{self, Cursor, ErrorKind, Read, Write};
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    ApplyError, ApplyFlags, ChangesetError, ChangesetOp, ChangesetReader, ConflictAction,
+    concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm, ApplyError,
+    ApplyFlags, Changegroup, ChangesetError, ChangesetOp, ChangesetReader, ConflictAction,
     SessionError, SqliteSessionExt,
 };
 
@@ -223,5 +224,87 @@ fn apply_changeset_strm_with_surfaces_reader_io_errors() {
     match err {
         ApplyError::ReaderIo(_) => {}
         other => panic!("expected ReaderIo, got {other:?}"),
+    }
+}
+
+#[test]
+fn invert_changeset_strm_matches_the_buffered_invert() {
+    let bytes = make_changeset(&[(1, 10)]);
+    let reference = invert_changeset(&bytes).unwrap();
+
+    let mut streamed = Vec::new();
+    invert_changeset_strm(Cursor::new(bytes), &mut streamed)
+        .expect("invert_changeset_strm succeeds");
+
+    assert_eq!(reference, streamed);
+}
+
+#[test]
+fn concat_changesets_strm_matches_the_buffered_concat() {
+    let a = make_changeset(&[(1, 10)]);
+    let b = make_changeset(&[(2, 20)]);
+    let reference = concat_changesets(&a, &b).unwrap();
+
+    let mut streamed = Vec::new();
+    concat_changesets_strm(Cursor::new(a), Cursor::new(b), &mut streamed)
+        .expect("concat_changesets_strm succeeds");
+
+    assert_eq!(reference, streamed);
+}
+
+#[test]
+fn changegroup_add_strm_and_output_strm_round_trip() {
+    let a = make_changeset(&[(1, 10)]);
+    let b = make_changeset(&[(2, 20)]);
+
+    let mut group = Changegroup::new().unwrap();
+    group.add_strm(Cursor::new(a)).expect("add_strm(a)");
+    group.add_strm(Cursor::new(b)).expect("add_strm(b)");
+
+    let mut streamed = Vec::new();
+    group.output_strm(&mut streamed).expect("output_strm");
+
+    // Apply the streamed merged changeset to a fresh replica.
+    let mut replica = fresh_connection();
+    create_items(&mut replica);
+    replica
+        .apply_changeset(&streamed, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_items(&mut replica), 2);
+}
+
+#[test]
+fn changegroup_add_strm_surfaces_reader_panic() {
+    struct PanicRead;
+    impl Read for PanicRead {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            panic!("panic-inside-reader");
+        }
+    }
+    let mut group = Changegroup::new().unwrap();
+    let err = group.add_strm(PanicRead).unwrap_err();
+    assert!(matches!(err, ChangesetError::ReaderPanicked), "{err:?}");
+}
+
+#[test]
+fn changegroup_output_strm_surfaces_writer_io_error() {
+    struct FailWrite;
+    impl Write for FailWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(ErrorKind::PermissionDenied, "no writes"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut group = Changegroup::new().unwrap();
+    group.add(&make_changeset(&[(1, 10)])).unwrap();
+    let err = group.output_strm(FailWrite).unwrap_err();
+    match err {
+        ChangesetError::WriterIo(inner) => {
+            assert_eq!(inner.kind(), ErrorKind::PermissionDenied);
+        }
+        other => panic!("expected WriterIo, got {other:?}"),
     }
 }

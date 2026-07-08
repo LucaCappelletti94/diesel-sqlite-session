@@ -358,6 +358,52 @@ The conflict callback receives a `ConflictInfo`: `old_value(i)` (pre-image), `ne
 
 Flags: `NOSAVEPOINT` (skip the wrapping `SAVEPOINT`), `INVERT` (apply the inverse), `IGNORENOOP` (suppress the conflict callback for `UPDATE` rows whose replica value already matches the post-image), `FKNOACTION` (skip `NO ACTION` FK handling on cascades). Compose with `|`.
 
+### Transform Helpers
+
+Three standalone helpers cover the read-only transforms `SQLite` supports on changeset blobs:
+
+- `invert_changeset(bytes)` wraps `sqlite3changeset_invert` and returns the inverse (`INSERT` becomes `DELETE`, `UPDATE` swaps old and new). Materializing the inverted bytes is useful as an undo record you can persist.
+- `concat_changesets(a, b)` wraps `sqlite3changeset_concat` and merges two changesets over the same schema.
+- `Changegroup` wraps `sqlite3changegroup_new/_schema/_add/_output/_delete` and aggregates n changesets, collapsing duplicate ops on the same primary key (`INSERT` then `UPDATE` on the same key becomes a single `INSERT` with the final values).
+
+All three have `_strm` siblings (`invert_changeset_strm`, `concat_changesets_strm`, `Changegroup::add_strm` / `output_strm`) that take `std::io::Read` and `std::io::Write` for inputs and outputs too large to hold in memory.
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{concat_changesets, invert_changeset, Changegroup, SqliteSessionExt};
+
+// Build three real changesets so every helper below has something to work on.
+fn snapshot(script: &[&str]) -> Vec<u8> {
+    let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut conn).unwrap();
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    for stmt in script {
+        diesel::sql_query(*stmt).execute(&mut conn).unwrap();
+    }
+    session.changeset().unwrap()
+}
+
+let insert_a = snapshot(&["INSERT INTO items (id, v) VALUES (1, 10)"]);
+let insert_b = snapshot(&["INSERT INTO items (id, v) VALUES (2, 20)"]);
+let update_a = snapshot(&[
+    "INSERT INTO items (id, v) VALUES (1, 10)",
+    "UPDATE items SET v = 99 WHERE id = 1",
+]);
+
+let _undo = invert_changeset(&insert_a)?;
+let _pairwise = concat_changesets(&insert_a, &insert_b)?;
+
+let mut group = Changegroup::new()?;
+group.add(&insert_a)?;
+group.add(&update_a)?;
+let _merged = group.output()?;
+# Ok::<_, diesel_sqlite_session::ChangesetError>(())
+```
+
+`Changegroup::set_schema` binds a connection so the group can reconcile `WITHOUT ROWID` tables and per-table column types. Plain rowid changesets fold in without one. `Changegroup` is `!Send + !Sync`. Drop it before the connection that any attached schema refers to.
+
 ## Platform Support
 
 | Platform | Backend | Status |
