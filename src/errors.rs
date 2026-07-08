@@ -174,6 +174,18 @@ pub enum ApplyError {
     /// The conflict handler panicked while resolving a conflict.
     #[error("Conflict handler panicked")]
     ConflictHandlerPanicked,
+
+    /// The filter callback panicked while inspecting a table or row.
+    #[error("Apply filter panicked")]
+    FilterPanicked,
+
+    /// The streamed reader returned an [`std::io::Error`].
+    #[error("streamed apply reader failed: {0}")]
+    ReaderIo(#[from] std::io::Error),
+
+    /// The streamed reader panicked.
+    #[error("streamed apply reader panicked")]
+    ReaderPanicked,
 }
 
 /// Types of conflicts that can occur when applying changes.

@@ -326,6 +326,38 @@ while let Some(row) = reader.next().unwrap() {
 
 `old_value(i)` and `new_value(i)` return `Result<Option<ChangesetValue<'_>>, ChangesetError>`. `Ok(None)` means the column was not touched by an `UPDATE`. `Err(OldNotAvailableOnInsert)` and `Err(NewNotAvailableOnDelete)` cover the op-shape mismatches. `is_primary_key(i)` reports the PK mask for the current row.
 
+### Enhanced Apply
+
+`apply_changeset_with` wraps `sqlite3changeset_apply_v2`, adding three things over `apply_changeset`: an `ApplyFlags` bitmask, a per-table filter callback, and the rebase blob `SQLite` produces when the conflict callback resolves conflicts with `Replace` or `Omit`. Its streamed sibling `apply_changeset_strm_with` reads the changeset from any `std::io::Read`.
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{ApplyFlags, ConflictAction, ConflictType, SqliteSessionExt};
+
+# let mut conn = SqliteConnection::establish(":memory:").unwrap();
+# diesel::sql_query("CREATE TABLE keep (id INTEGER PRIMARY KEY, v INTEGER)")
+#     .execute(&mut conn).unwrap();
+# diesel::sql_query("CREATE TABLE audit (id INTEGER PRIMARY KEY, v INTEGER)")
+#     .execute(&mut conn).unwrap();
+# let changeset: Vec<u8> = vec![];
+let outcome = conn.apply_changeset_with(
+    &changeset,
+    ApplyFlags::INVERT | ApplyFlags::IGNORENOOP,
+    |table| table != "audit",
+    |info| match info.conflict_type() {
+        ConflictType::Data => ConflictAction::Replace,
+        _ => ConflictAction::Abort,
+    },
+)?;
+// `outcome.rebase` carries the SQLite-emitted rebase blob when the conflict
+// callback resolved anything via Replace or Omit. Empty otherwise.
+# Ok::<_, diesel_sqlite_session::ApplyError>(())
+```
+
+The conflict callback receives a `ConflictInfo`: `old_value(i)` (pre-image), `new_value(i)` (post-image), `conflict_value(i)` (on-disk clashing value), plus `fk_conflicts_count()` for `ForeignKey` conflicts. All accessors are bound to the callback frame.
+
+Flags: `NOSAVEPOINT` (skip the wrapping `SAVEPOINT`), `INVERT` (apply the inverse), `IGNORENOOP` (suppress the conflict callback for `UPDATE` rows whose replica value already matches the post-image), `FKNOACTION` (skip `NO ACTION` FK handling on cascades). Compose with `|`.
+
 ## Platform Support
 
 | Platform | Backend | Status |

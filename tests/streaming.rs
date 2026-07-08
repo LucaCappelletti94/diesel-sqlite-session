@@ -8,7 +8,8 @@ use std::io::{self, Cursor, ErrorKind, Read, Write};
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    ChangesetError, ChangesetOp, ChangesetReader, SessionError, SqliteSessionExt,
+    ApplyError, ApplyFlags, ChangesetError, ChangesetOp, ChangesetReader, ConflictAction,
+    SessionError, SqliteSessionExt,
 };
 
 fn fresh_connection() -> SqliteConnection {
@@ -19,6 +20,12 @@ fn create_items(conn: &mut SqliteConnection) {
     sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
         .execute(conn)
         .unwrap();
+}
+
+fn count_items(conn: &mut SqliteConnection) -> i64 {
+    diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM items")
+        .get_result(conn)
+        .unwrap()
 }
 
 /// Build an INSERT-only changeset for `rows` in a fresh `items` table.
@@ -174,5 +181,47 @@ fn changeset_reader_open_strm_defers_reader_io_errors_to_next() {
             other => panic!("expected ReaderIo or NextFailed, got {other:?}"),
         },
         other => panic!("expected ReaderIo or Ok, got {other:?}"),
+    }
+}
+
+#[test]
+fn apply_changeset_strm_with_applies_the_streamed_bytes() {
+    let bytes = make_changeset(&[(1, 10), (2, 20)]);
+    let mut replica = fresh_connection();
+    create_items(&mut replica);
+
+    let outcome = replica
+        .apply_changeset_strm_with(
+            Cursor::new(bytes),
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .expect("apply_changeset_strm_with succeeds");
+    assert!(outcome.rebase.is_empty());
+    assert_eq!(count_items(&mut replica), 2);
+}
+
+#[test]
+fn apply_changeset_strm_with_surfaces_reader_io_errors() {
+    struct FailRead;
+    impl Read for FailRead {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("reader-failed"))
+        }
+    }
+    let mut replica = fresh_connection();
+    create_items(&mut replica);
+    let err = replica
+        .apply_changeset_strm_with(
+            FailRead,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap_err();
+    match err {
+        ApplyError::ReaderIo(_) => {}
+        other => panic!("expected ReaderIo, got {other:?}"),
     }
 }

@@ -3,6 +3,7 @@
 #![allow(clippy::module_name_repetitions)]
 
 mod apply;
+mod apply_v2;
 mod blob;
 mod changeset;
 mod errors;
@@ -11,6 +12,7 @@ mod preupdate;
 mod session;
 mod streaming;
 
+pub use apply_v2::{ApplyFlags, ApplyOutcome, ConflictInfo};
 pub use blob::{BlobError, BlobMode, SqliteBlob};
 pub use changeset::{
     ChangesetColumnType, ChangesetError, ChangesetOp, ChangesetReader, ChangesetRow, ChangesetValue,
@@ -147,6 +149,50 @@ pub trait SqliteSessionExt {
         rowid: i64,
         mode: BlobMode,
     ) -> Result<SqliteBlob, BlobError>;
+
+    /// Apply a changeset via `sqlite3changeset_apply_v2`. Extends the plain
+    /// [`apply_changeset`](Self::apply_changeset) with an [`ApplyFlags`]
+    /// bitmask, a per-table filter, and the rebase blob emitted when
+    /// conflicts are resolved via [`ConflictAction::Replace`] /
+    /// [`ConflictAction::Omit`], carried in the returned [`ApplyOutcome`].
+    /// The conflict callback receives a [`ConflictInfo`] view of the row.
+    ///
+    /// # Errors
+    ///
+    /// - [`ApplyError::ApplyFailed`] on any `SQLite` failure.
+    /// - [`ApplyError::ConflictAborted`] when the handler returned `Abort`.
+    /// - [`ApplyError::ConflictHandlerPanicked`] / `FilterPanicked` when the
+    ///   corresponding callback panicked.
+    fn apply_changeset_with<Filter, Conflict>(
+        &mut self,
+        changeset: &[u8],
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        Filter: Fn(&str) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction;
+
+    /// Streamed [`apply_changeset_with`](Self::apply_changeset_with) backed
+    /// by `sqlite3changeset_apply_v2_strm`. Reads the changeset from any
+    /// [`std::io::Read`] in chunks.
+    ///
+    /// # Errors
+    ///
+    /// Every [`apply_changeset_with`](Self::apply_changeset_with) variant,
+    /// plus [`ApplyError::ReaderIo`] and [`ApplyError::ReaderPanicked`].
+    fn apply_changeset_strm_with<R, Filter, Conflict>(
+        &mut self,
+        reader: R,
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        R: std::io::Read,
+        Filter: Fn(&str) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction;
 }
 
 impl SqliteSessionExt for SqliteConnection {
@@ -189,5 +235,36 @@ impl SqliteSessionExt for SqliteConnection {
         mode: BlobMode,
     ) -> Result<SqliteBlob, BlobError> {
         SqliteBlob::open_internal(self, database, table, column, rowid, mode)
+    }
+
+    #[inline]
+    fn apply_changeset_with<Filter, Conflict>(
+        &mut self,
+        changeset: &[u8],
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        Filter: Fn(&str) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
+    {
+        apply_v2::apply_changeset_with(self, changeset, flags, filter, on_conflict)
+    }
+
+    #[inline]
+    fn apply_changeset_strm_with<R, Filter, Conflict>(
+        &mut self,
+        reader: R,
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        R: std::io::Read,
+        Filter: Fn(&str) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
+    {
+        apply_v2::apply_changeset_strm_with(self, reader, flags, filter, on_conflict)
     }
 }

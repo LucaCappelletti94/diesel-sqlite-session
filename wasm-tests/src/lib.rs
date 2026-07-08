@@ -7,8 +7,8 @@
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    BlobError, BlobMode, ChangesetOp, ChangesetReader, ConflictAction, PreUpdateColumnType,
-    PreUpdateOp, SqliteSessionExt,
+    ApplyFlags, BlobError, BlobMode, ChangesetOp, ChangesetReader, ConflictAction, ConflictType,
+    PreUpdateColumnType, PreUpdateOp, SqliteSessionExt,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -654,4 +654,157 @@ async fn session_changeset_strm_matches_buffered_wasm() {
     let mut streamed = Vec::new();
     session.changeset_strm(&mut streamed).unwrap();
     assert_eq!(buffered, streamed);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_with_filter_skips_tables_wasm() {
+    let mut source = create_connection();
+    sql_query("CREATE TABLE keep_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("CREATE TABLE skip_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut source)
+        .unwrap();
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO keep_wasm (id, v) VALUES (1, 1)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO skip_wasm (id, v) VALUES (7, 7)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    sql_query("CREATE TABLE keep_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut replica)
+        .unwrap();
+    sql_query("CREATE TABLE skip_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut replica)
+        .unwrap();
+
+    let outcome = replica
+        .apply_changeset_with(
+            &bytes,
+            ApplyFlags::empty(),
+            |table| table != "skip_wasm",
+            |_| ConflictAction::Abort,
+        )
+        .expect("apply succeeds");
+    assert!(outcome.rebase.is_empty());
+
+    let keep_count: i64 =
+        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM keep_wasm")
+            .get_result(&mut replica)
+            .unwrap();
+    let skip_count: i64 =
+        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM skip_wasm")
+            .get_result(&mut replica)
+            .unwrap();
+    assert_eq!(keep_count, 1);
+    assert_eq!(skip_count, 0);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_with_invert_flag_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE flipped_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut conn)
+        .unwrap();
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO flipped_wasm (id, v) VALUES (1, 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    // Apply inverted to the same connection: the INSERT reads as a DELETE.
+    conn.apply_changeset_with(
+        &bytes,
+        ApplyFlags::INVERT,
+        |_| true,
+        |_| ConflictAction::Abort,
+    )
+    .expect("inverted apply succeeds");
+    let count: i64 =
+        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM flipped_wasm")
+            .get_result(&mut conn)
+            .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_with_conflict_info_wasm() {
+    let mut source = create_connection();
+    sql_query("CREATE TABLE clash_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO clash_wasm (id, v) VALUES (1, 1)")
+        .execute(&mut source)
+        .unwrap();
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("UPDATE clash_wasm SET v = 100 WHERE id = 1")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    sql_query("CREATE TABLE clash_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut replica)
+        .unwrap();
+    sql_query("INSERT INTO clash_wasm (id, v) VALUES (1, 42)")
+        .execute(&mut replica)
+        .unwrap();
+
+    let captured: Arc<Mutex<Option<(ConflictType, i64, i64, i64)>>> = Arc::new(Mutex::new(None));
+    let sink = captured.clone();
+    replica
+        .apply_changeset_with(
+            &bytes,
+            ApplyFlags::empty(),
+            |_| true,
+            move |info| {
+                let old = info.old_value(1).unwrap().unwrap().as_i64();
+                let new = info.new_value(1).unwrap().unwrap().as_i64();
+                let on_disk = info.conflict_value(1).unwrap().as_i64();
+                *sink.lock() = Some((info.conflict_type(), old, new, on_disk));
+                ConflictAction::Replace
+            },
+        )
+        .expect("apply with Replace succeeds");
+
+    let observed = captured.lock().take().expect("saw a conflict");
+    assert_eq!(observed.0, ConflictType::Data);
+    assert_eq!(observed.1, 1);
+    assert_eq!(observed.2, 100);
+    assert_eq!(observed.3, 42);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_strm_with_applies_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset_strm_with(
+            std::io::Cursor::new(bytes),
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 1);
 }
