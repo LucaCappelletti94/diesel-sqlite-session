@@ -5,9 +5,13 @@
 mod apply;
 mod errors;
 mod ffi;
+mod preupdate;
 mod session;
 
 pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError, SqliteErrorCode};
+pub use preupdate::{
+    PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateHook, PreUpdateOp, PreUpdateValue,
+};
 pub use session::Session;
 
 use diesel::SqliteConnection;
@@ -95,6 +99,29 @@ pub trait SqliteSessionExt {
     fn apply_patchset<F>(&mut self, patchset: &[u8], on_conflict: F) -> Result<(), ApplyError>
     where
         F: Fn(ConflictType) -> ConflictAction;
+
+    /// Register a pre-update hook that fires just before every `INSERT`,
+    /// `UPDATE`, or `DELETE` on a rowid table. The returned [`PreUpdateHook`]
+    /// owns the registration; drop it to detach the callback.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use diesel::prelude::*;
+    /// use diesel_sqlite_session::{PreUpdateOp, SqliteSessionExt};
+    ///
+    /// let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    /// let hook = conn.on_preupdate(|event| {
+    ///     if matches!(event.op(), PreUpdateOp::Update) {
+    ///         println!("about to update rowid {}", event.old_rowid());
+    ///     }
+    /// });
+    /// // ... work ...
+    /// drop(hook); // detach the callback
+    /// ```
+    fn on_preupdate<F>(&mut self, hook: F) -> PreUpdateHook
+    where
+        F: FnMut(PreUpdateEvent<'_>) + Send + 'static;
 }
 
 impl SqliteSessionExt for SqliteConnection {
@@ -117,5 +144,13 @@ impl SqliteSessionExt for SqliteConnection {
         F: Fn(ConflictType) -> ConflictAction,
     {
         apply::apply_patchset(self, patchset, on_conflict)
+    }
+
+    #[inline]
+    fn on_preupdate<F>(&mut self, hook: F) -> PreUpdateHook
+    where
+        F: FnMut(PreUpdateEvent<'_>) + Send + 'static,
+    {
+        PreUpdateHook::install(self, hook)
     }
 }

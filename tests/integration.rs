@@ -756,3 +756,67 @@ fn test_selective_table_tracking() {
     assert_eq!(tracked_count, 1);
     assert_eq!(untracked_count, 0);
 }
+
+#[test]
+fn two_sessions_on_one_connection_track_disjoint_tables() {
+    // SQLite's session extension supports any number of concurrent sessions
+    // on the same connection. Internally it chains them through the shared
+    // `sqlite3_preupdate_hook` pCtx slot, so this test also pins that our
+    // `Session` type does not accidentally clobber that linked list.
+    let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    sql_query("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("CREATE TABLE dogs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let mut cats_session = conn.create_session().unwrap();
+    cats_session.attach_by_name("cats").unwrap();
+    let mut dogs_session = conn.create_session().unwrap();
+    dogs_session.attach_by_name("dogs").unwrap();
+
+    sql_query("INSERT INTO cats (id, name) VALUES (1, 'Miso')")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO dogs (id, name) VALUES (1, 'Rex')")
+        .execute(&mut conn)
+        .unwrap();
+
+    let cats_changeset = cats_session.changeset().unwrap();
+    let dogs_changeset = dogs_session.changeset().unwrap();
+    // Sessions must be dropped in the reverse order they were created so
+    // SQLite's own linked-list bookkeeping stays consistent.
+    drop(dogs_session);
+    drop(cats_session);
+
+    assert!(!cats_changeset.is_empty());
+    assert!(!dogs_changeset.is_empty());
+
+    // Apply each changeset to its own replica: `cats_changeset` must NOT
+    // materialize any `dogs` rows and vice versa.
+    for (name, changeset) in [("cats", &cats_changeset), ("dogs", &dogs_changeset)] {
+        let mut replica = SqliteConnection::establish(":memory:").unwrap();
+        sql_query("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            .execute(&mut replica)
+            .unwrap();
+        sql_query("CREATE TABLE dogs (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            .execute(&mut replica)
+            .unwrap();
+        replica
+            .apply_changeset(changeset, |_| ConflictAction::Abort)
+            .unwrap();
+
+        let cats_count: i64 =
+            diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM cats")
+                .get_result(&mut replica)
+                .unwrap();
+        let dogs_count: i64 =
+            diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM dogs")
+                .get_result(&mut replica)
+                .unwrap();
+        let (expect_cats, expect_dogs) = if name == "cats" { (1, 0) } else { (0, 1) };
+        assert_eq!(cats_count, expect_cats, "{name} changeset cats");
+        assert_eq!(dogs_count, expect_dogs, "{name} changeset dogs");
+    }
+}

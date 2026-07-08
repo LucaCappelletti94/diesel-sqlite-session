@@ -6,7 +6,10 @@
 
 use diesel::prelude::*;
 use diesel::sql_query;
-use diesel_sqlite_session::{ConflictAction, SqliteSessionExt};
+use diesel_sqlite_session::{ConflictAction, PreUpdateColumnType, PreUpdateOp, SqliteSessionExt};
+use parking_lot::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -327,4 +330,174 @@ async fn test_enable_disable_wasm() {
 
     // Should have 2 rows (1 and 3, not 2)
     assert_eq!(count_rows(&mut replica), 2);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_insert_fires_hook_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let events: Arc<Mutex<Vec<(PreUpdateOp, String, String, i64, usize)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let sink = events.clone();
+    let hook = conn.on_preupdate(move |event| {
+        sink.lock().push((
+            event.op(),
+            event.database().to_owned(),
+            event.table().to_owned(),
+            event.new_rowid(),
+            event.column_count(),
+        ));
+    });
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 42)")
+        .execute(&mut conn)
+        .unwrap();
+    drop(hook);
+
+    let observed = events.lock().clone();
+    assert_eq!(observed.len(), 1);
+    let (op, database, table, new_rowid, column_count) = observed[0].clone();
+    assert_eq!(op, PreUpdateOp::Insert);
+    assert_eq!(database, "main");
+    assert_eq!(table, "test_items");
+    assert_eq!(new_rowid, 1);
+    assert_eq!(column_count, 3);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_update_delivers_old_and_new_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'before', 1)")
+        .execute(&mut conn)
+        .unwrap();
+
+    #[derive(Clone)]
+    struct Snapshot {
+        old_name: Option<String>,
+        new_name: Option<String>,
+        old_value: i64,
+        new_value: i64,
+    }
+    let snap: Arc<Mutex<Option<Snapshot>>> = Arc::new(Mutex::new(None));
+    let sink = snap.clone();
+    let hook = conn.on_preupdate(move |event| {
+        if matches!(event.op(), PreUpdateOp::Update) {
+            let old_name = event
+                .old_value(1)
+                .ok()
+                .and_then(|v| v.as_text().map(str::to_owned));
+            let new_name = event
+                .new_value(1)
+                .ok()
+                .and_then(|v| v.as_text().map(str::to_owned));
+            let old_value = event.old_value(2).map(|v| v.as_i64()).unwrap_or(-1);
+            let new_value = event.new_value(2).map(|v| v.as_i64()).unwrap_or(-1);
+            *sink.lock() = Some(Snapshot {
+                old_name,
+                new_name,
+                old_value,
+                new_value,
+            });
+        }
+    });
+    sql_query("UPDATE test_items SET name = 'after', value = 2 WHERE id = 1")
+        .execute(&mut conn)
+        .unwrap();
+    drop(hook);
+
+    let s = snap.lock().clone().expect("saw an Update event");
+    assert_eq!(s.old_name.as_deref(), Some("before"));
+    assert_eq!(s.new_name.as_deref(), Some("after"));
+    assert_eq!(s.old_value, 1);
+    assert_eq!(s.new_value, 2);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_column_type_matches_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE mixed_wasm (a, b, c, d, e)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let types: Arc<Mutex<Vec<PreUpdateColumnType>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = types.clone();
+    let hook = conn.on_preupdate(move |event| {
+        if matches!(event.op(), PreUpdateOp::Insert) {
+            let mut buf = sink.lock();
+            for i in 0..u32::try_from(event.column_count()).unwrap() {
+                buf.push(event.new_value(i).unwrap().column_type());
+            }
+        }
+    });
+    sql_query("INSERT INTO mixed_wasm (a, b, c, d, e) VALUES (7, 'hi', 3.5, x'DEADBEEF', NULL)")
+        .execute(&mut conn)
+        .unwrap();
+    drop(hook);
+
+    let observed = types.lock().clone();
+    assert_eq!(
+        observed,
+        vec![
+            PreUpdateColumnType::Integer,
+            PreUpdateColumnType::Text,
+            PreUpdateColumnType::Float,
+            PreUpdateColumnType::Blob,
+            PreUpdateColumnType::Null,
+        ],
+    );
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_dropping_guard_stops_callback_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let count = Arc::new(AtomicU32::new(0));
+    let sink = count.clone();
+    let hook = conn.on_preupdate(move |_| {
+        sink.fetch_add(1, Ordering::SeqCst);
+    });
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'a', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    drop(hook);
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'b', 2)")
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_then_session_cutover_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let count = Arc::new(AtomicU32::new(0));
+    let sink = count.clone();
+    let hook = conn.on_preupdate(move |_| {
+        sink.fetch_add(1, Ordering::SeqCst);
+    });
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'x', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    drop(hook);
+
+    let mut session = conn.create_session().unwrap();
+    session.attach::<test_items::table>().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'y', 2)")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+    assert!(!changeset.is_empty());
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset(&changeset, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 1);
 }
