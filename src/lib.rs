@@ -4,12 +4,17 @@
 
 mod apply;
 mod blob;
+mod changeset;
 mod errors;
 mod ffi;
 mod preupdate;
 mod session;
+mod streaming;
 
 pub use blob::{BlobError, BlobMode, SqliteBlob};
+pub use changeset::{
+    ChangesetColumnType, ChangesetError, ChangesetOp, ChangesetReader, ChangesetRow, ChangesetValue,
+};
 pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError, SqliteErrorCode};
 pub use preupdate::{
     PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateHook, PreUpdateOp, PreUpdateValue,

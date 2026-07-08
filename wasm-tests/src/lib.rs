@@ -7,7 +7,8 @@
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    BlobError, BlobMode, ConflictAction, PreUpdateColumnType, PreUpdateOp, SqliteSessionExt,
+    BlobError, BlobMode, ChangesetOp, ChangesetReader, ConflictAction, PreUpdateColumnType,
+    PreUpdateOp, SqliteSessionExt,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -572,4 +573,69 @@ async fn blob_write_fires_preupdate_with_column_index_wasm() {
         .expect("saw a blob-write event");
     assert_eq!(blob_hit.0, PreUpdateOp::Delete);
     assert_eq!(blob_hit.1, Some(2));
+}
+
+#[wasm_bindgen_test]
+async fn changeset_reader_iterates_an_insert_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'wasm', 7)")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&changeset).expect("open reader");
+    let row = reader.next().expect("advance").expect("saw an insert row");
+    assert_eq!(row.op(), ChangesetOp::Insert);
+    assert_eq!(row.table(), "test_items");
+    assert_eq!(row.column_count(), 3);
+    assert_eq!(row.new_value(0).unwrap().unwrap().as_i64(), 1);
+    assert_eq!(row.new_value(1).unwrap().unwrap().as_text(), Some("wasm"));
+    assert_eq!(row.new_value(2).unwrap().unwrap().as_i64(), 7);
+    assert!(reader.next().unwrap().is_none());
+}
+
+#[wasm_bindgen_test]
+async fn changeset_reader_open_inverted_swaps_insert_and_delete_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+
+    let mut inverted = ChangesetReader::open_inverted(&changeset).expect("open inverted reader");
+    let row = inverted
+        .next()
+        .expect("advance")
+        .expect("saw an inverted row");
+    assert_eq!(row.op(), ChangesetOp::Delete);
+    let id = row.old_value(0).unwrap().expect("id");
+    assert_eq!(id.as_i64(), 1);
+}
+
+#[wasm_bindgen_test]
+async fn changeset_reader_open_strm_iterates_a_stream_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open_strm(std::io::Cursor::new(bytes)).unwrap();
+    let row = reader.next().unwrap().expect("saw a row");
+    assert_eq!(row.op(), ChangesetOp::Insert);
+    assert_eq!(row.table(), "test_items");
 }

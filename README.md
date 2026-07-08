@@ -273,6 +273,37 @@ blob.close().unwrap();
 
 `SqliteBlob` is `!Send + !Sync` and RAII with the same "drop before the connection" contract as `Session` and `PreUpdateHook`. `write_at` on a `ReadOnly` handle short-circuits to `BlobError::ReadOnly` without touching `SQLite`. `close(self)` surfaces the result of `sqlite3_blob_close`. `Drop` closes silently.
 
+### Changeset Iterator
+
+`ChangesetReader` wraps the `sqlite3changeset_start` / `_next` / `_op` / `_pk` / `_old` / `_new` / `_finalize` family. It is the read side of the blobs `Session::changeset` and `Session::patchset` produce: walk each row and inspect old and new values without applying anything. `open_inverted` walks the inverse (`INSERT` becomes `DELETE`, and vice versa). `open_strm` and `open_inverted_strm` take any `std::io::Read` for changesets that would not fit in memory.
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{ChangesetOp, ChangesetReader, SqliteSessionExt};
+
+# let mut conn = SqliteConnection::establish(":memory:").unwrap();
+# diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+#     .execute(&mut conn).unwrap();
+# let mut session = conn.create_session().unwrap();
+# session.attach_all().unwrap();
+# diesel::sql_query("INSERT INTO items (id, name) VALUES (1, 'Widget')")
+#     .execute(&mut conn).unwrap();
+# let changeset = session.changeset().unwrap();
+let mut reader = ChangesetReader::open(&changeset).unwrap();
+while let Some(row) = reader.next().unwrap() {
+    match row.op() {
+        ChangesetOp::Insert => {
+            let name = row.new_value(1).unwrap().and_then(|v| v.as_text().map(str::to_owned));
+            println!("insert into {} name={:?}", row.table(), name);
+        }
+        ChangesetOp::Update => println!("update on {}", row.table()),
+        ChangesetOp::Delete => println!("delete from {}", row.table()),
+    }
+}
+```
+
+`old_value(i)` and `new_value(i)` return `Result<Option<ChangesetValue<'_>>, ChangesetError>`. `Ok(None)` means the column was not touched by an `UPDATE`. `Err(OldNotAvailableOnInsert)` and `Err(NewNotAvailableOnDelete)` cover the op-shape mismatches. `is_primary_key(i)` reports the PK mask for the current row.
+
 ## Platform Support
 
 | Platform | Backend | Status |
