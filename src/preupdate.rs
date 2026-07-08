@@ -168,7 +168,7 @@ impl<'a> PreUpdateValue<'a> {
         self.column_type() == PreUpdateColumnType::Null
     }
 
-    /// Read the value as an `i64` (`sqlite3_value_int64`, with SQLite's
+    /// Read the value as an `i64` (`sqlite3_value_int64`, with `SQLite`'s
     /// coercion rules).
     #[must_use]
     pub fn as_i64(&self) -> i64 {

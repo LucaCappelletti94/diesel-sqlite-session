@@ -1,6 +1,7 @@
 //! Changeset transform helpers: `invert` (undo), `concat` (pairwise merge),
-//! the `Changegroup` n-way merge, and the `Rebaser` for multi-master
-//! conflict rewriting.
+//! and the `Changegroup` n-way merge. Wraps `sqlite3changeset_invert`,
+//! `sqlite3changeset_concat`, and the `sqlite3changegroup_*` family, plus the
+//! `sqlite3rebaser_*` bindings used by [`Rebaser`].
 
 use std::ffi::{c_int, c_void, CString};
 use std::marker::PhantomData;
@@ -692,7 +693,7 @@ impl std::fmt::Debug for Rebaser {
 }
 
 /// Copy `len` bytes from `ptr` into an owned `Vec<u8>` and release the
-/// SQLite allocation. Handles null and zero-length inputs.
+/// `SQLite` allocation. Handles null and zero-length inputs.
 fn copy_and_free(ptr: *mut c_void, len: c_int) -> Vec<u8> {
     if ptr.is_null() {
         return Vec::new();

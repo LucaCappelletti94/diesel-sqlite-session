@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/LucaCappelletti94/diesel-sqlite-session/graph/badge.svg)](https://codecov.io/gh/LucaCappelletti94/diesel-sqlite-session)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This crate adds `SQLite` [session extension](https://sqlite.org/sessionintro.html) support to the Diesel ORM. It tracks INSERT, UPDATE, and DELETE operations through a `SqliteSessionExt` trait on `SqliteConnection`, exposes the recorded changes as compact binary changesets or patchsets, and applies them to replica databases with configurable conflict resolution. Tables can be attached with type-safe Diesel table types or by runtime name, and the crate works on Linux, macOS, Windows, iOS, Android, and WebAssembly. Typical applications include offline-first apps that sync when connectivity returns, multi-master replication between database instances, audit logging for compliance, undo and redo systems backed by stored changesets, and edge databases that sync with a central server.
+`SQLite` [session extension](https://sqlite.org/sessionintro.html) support for Diesel. Track row-level `INSERT`, `UPDATE`, and `DELETE` on a `SqliteConnection`, emit changesets or patchsets, and apply them elsewhere with a conflict callback. Attach tables by Diesel table type or by runtime name. Runs on Linux, macOS, Windows, iOS, Android, and WebAssembly.
 
 > **Note**: Support depends on Diesel's `with_raw_connection` (added in [diesel#4966](https://github.com/diesel-rs/diesel/pull/4966)). Since this is merged but not yet released, use Diesel from the upstream git repo.
 
@@ -156,28 +156,6 @@ let has_changes = !session.is_empty();
 session.set_enabled(false);
 ```
 
-`session.changeset()` and `session.patchset()` return owned `Vec<u8>`. Their `_strm` siblings pump the bytes through any `std::io::Write` instead, so a large changeset can flow directly into a `File`, `TcpStream`, or a compressor without materializing the whole blob in memory. The module-level `stream_size` / `set_stream_size` control the default chunk size `SQLite` uses across all streamed variants in this crate.
-
-```rust
-use diesel::prelude::*;
-use diesel_sqlite_session::{set_stream_size, stream_size, SqliteSessionExt};
-
-# let mut conn = SqliteConnection::establish(":memory:").unwrap();
-# diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
-#     .execute(&mut conn).unwrap();
-# let mut session = conn.create_session().unwrap();
-# session.attach_all().unwrap();
-# diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 100)")
-#     .execute(&mut conn).unwrap();
-let mut streamed = Vec::new();
-session.changeset_strm(&mut streamed)?;
-
-let default_chunk = stream_size()?;
-set_stream_size(64 * 1024)?;
-# set_stream_size(default_chunk).unwrap();
-# Ok::<_, diesel_sqlite_session::SessionError>(())
-```
-
 ### Conflict Handling
 
 When applying changesets/patchsets, conflicts are handled via callback:
@@ -262,9 +240,9 @@ diesel::sql_query("INSERT INTO audit (note) VALUES ('hello')")
 drop(hook);
 ```
 
-The callback receives a `PreUpdateEvent<'_>` bound to the callback frame. Values returned by `old_value(col)` / `new_value(col)` borrow from `SQLite`'s per-value buffers, so copy anything you need into owned types (`String`, `Vec<u8>`, `i64`) before the closure returns. `depth()` is `0` at the top level and `>0` inside a trigger. Panics inside the closure are caught by the trampoline.
+The callback receives a `PreUpdateEvent<'_>` bound to the callback frame. Values returned by `old_value(col)` / `new_value(col)` borrow from `SQLite`'s per-value buffers, so copy anything you need into owned types (`String`, `Vec<u8>`, `i64`) before the closure returns. `blob_write_column()` returns `Some(i)` when the event was raised by `sqlite3_blob_write`, `None` for regular DML. `depth()` is `0` at the top level and `>0` inside a trigger. Panics inside the closure are caught by the trampoline.
 
-`PreUpdateHook` is an RAII guard. `SQLite` allows one hook per connection, so a second `on_preupdate` while a guard is alive replaces the callback and silently retires the older guard.
+`PreUpdateHook` is an RAII guard; `SQLite` allows one hook per connection, so a second `on_preupdate` while a guard is alive replaces the callback and silently retires the older guard.
 
 ### Incremental Blob I/O
 
@@ -293,11 +271,11 @@ assert_eq!(&echo, b"HelloBlob");
 blob.close().unwrap();
 ```
 
-`SqliteBlob` is `!Send + !Sync` and RAII with the same "drop before the connection" contract as `Session` and `PreUpdateHook`. `write_at` on a `ReadOnly` handle short-circuits to `BlobError::ReadOnly` without touching `SQLite`. `close(self)` surfaces the result of `sqlite3_blob_close`. `Drop` closes silently.
+`SqliteBlob` is `!Send + !Sync` and RAII with the same "drop before the connection" contract as `Session` and `PreUpdateHook`. `write_at` on a `ReadOnly` handle short-circuits to `BlobError::ReadOnly` without touching `SQLite`. `close(self)` surfaces the result of `sqlite3_blob_close`; `Drop` closes silently.
 
 ### Changeset Iterator
 
-`ChangesetReader` wraps the `sqlite3changeset_start` / `_next` / `_op` / `_pk` / `_old` / `_new` / `_finalize` family. It is the read side of the blobs `Session::changeset` and `Session::patchset` produce: walk each row and inspect old and new values without applying anything. `open_inverted` walks the inverse (`INSERT` becomes `DELETE`, and vice versa). `open_strm` and `open_inverted_strm` take any `std::io::Read` for changesets that would not fit in memory.
+`ChangesetReader` wraps the `sqlite3changeset_start` / `_next` / `_op` / `_pk` / `_old` / `_new` / `_finalize` family. It is the read side of the blobs `Session::changeset` and `Session::patchset` produce: walk each row and inspect old and new values without applying anything. `open_inverted` walks the inverse (`INSERT` becomes `DELETE`, and vice versa).
 
 ```rust
 use diesel::prelude::*;
@@ -324,11 +302,11 @@ while let Some(row) = reader.next().unwrap() {
 }
 ```
 
-`old_value(i)` and `new_value(i)` return `Result<Option<ChangesetValue<'_>>, ChangesetError>`. `Ok(None)` means the column was not touched by an `UPDATE`. `Err(OldNotAvailableOnInsert)` and `Err(NewNotAvailableOnDelete)` cover the op-shape mismatches. `is_primary_key(i)` reports the PK mask for the current row.
+`old_value(i)` and `new_value(i)` return `Result<Option<ChangesetValue<'_>>, ChangesetError>`. `Ok(None)` means the column was not touched by an `UPDATE`; `Err(OldNotAvailableOnInsert)` and `Err(NewNotAvailableOnDelete)` cover the op-shape mismatches. `is_primary_key(i)` reports the PK mask for the current row.
 
 ### Enhanced Apply
 
-`apply_changeset_with` wraps `sqlite3changeset_apply_v2`, adding three things over `apply_changeset`: an `ApplyFlags` bitmask, a per-table filter callback, and the rebase blob `SQLite` produces when the conflict callback resolves conflicts with `Replace` or `Omit`. Its streamed sibling `apply_changeset_strm_with` reads the changeset from any `std::io::Read`.
+`apply_changeset_with` wraps `sqlite3changeset_apply_v2`, adding three things over `apply_changeset`: an `ApplyFlags` bitmask, a per-table filter callback, and the rebase blob `SQLite` produces when the conflict callback resolves conflicts with `Replace` or `Omit`.
 
 ```rust
 use diesel::prelude::*;
@@ -402,8 +380,6 @@ Three standalone helpers cover the read-only transforms `SQLite` supports on cha
 - `concat_changesets(a, b)` wraps `sqlite3changeset_concat` and merges two changesets over the same schema.
 - `Changegroup` wraps `sqlite3changegroup_new/_schema/_add/_output/_delete` and aggregates n changesets, collapsing duplicate ops on the same primary key (`INSERT` then `UPDATE` on the same key becomes a single `INSERT` with the final values).
 
-All three have `_strm` siblings (`invert_changeset_strm`, `concat_changesets_strm`, `Changegroup::add_strm` / `output_strm`) that take `std::io::Read` and `std::io::Write` for inputs and outputs too large to hold in memory.
-
 ```rust
 use diesel::prelude::*;
 use diesel_sqlite_session::{concat_changesets, invert_changeset, Changegroup, SqliteSessionExt};
@@ -438,7 +414,7 @@ let _merged = group.output()?;
 # Ok::<_, diesel_sqlite_session::ChangesetError>(())
 ```
 
-`Changegroup::set_schema` binds a connection so the group can reconcile `WITHOUT ROWID` tables and per-table column types. Plain rowid changesets fold in without one. `Changegroup` is `!Send + !Sync`. Drop it before the connection that any attached schema refers to.
+`Changegroup::set_schema` binds a connection so the group can reconcile `WITHOUT ROWID` tables and per-table column types; plain rowid changesets fold in without one. `Changegroup` is `!Send + !Sync`; drop it before the connection that any attached schema refers to.
 
 `Changegroup::add_change` folds a single positioned `ChangesetReader` row into the group, so you can pick individual rows without materializing an intermediate blob.
 
@@ -568,7 +544,66 @@ peer_a.apply_changeset_with(
 # Ok::<_, diesel_sqlite_session::ChangesetError>(())
 ```
 
-`Rebaser` is `!Send + !Sync` and RAII. `configure` can be called repeatedly to stack rebase blobs before calling `rebase`. `rebase_strm(reader, writer)` is the streamed equivalent when the changeset does not fit in memory.
+`Rebaser` is `!Send + !Sync` and RAII. `configure` can be called repeatedly to stack rebase blobs before calling `rebase`.
+
+### Streamed Variants
+
+Every buffered API has a streamed sibling backed by the `_strm` C entry points. They take `std::io::Read` and `std::io::Write` and let `SQLite` pull or push bytes in chunks; pass anything (a `File`, `TcpStream`, `Cursor<Vec<u8>>`, a compressor, etc.).
+
+```rust
+use std::io::Cursor;
+use diesel::prelude::*;
+use diesel_sqlite_session::{
+    concat_changesets_strm, invert_changeset_strm, ApplyFlags, Changegroup, ChangesetOp,
+    ChangesetReader, ConflictAction, Rebaser, SqliteSessionExt,
+};
+
+let mut conn = SqliteConnection::establish(":memory:").unwrap();
+diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+    .execute(&mut conn).unwrap();
+let mut session = conn.create_session().unwrap();
+session.attach_all().unwrap();
+diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+    .execute(&mut conn).unwrap();
+
+// Session -> Vec through a writer.
+let mut streamed = Vec::new();
+session.changeset_strm(&mut streamed)?;
+
+// Iterate a streamed input.
+let mut reader = ChangesetReader::open_strm(Cursor::new(streamed.clone()))?;
+while let Some(row) = reader.next()? {
+    assert_eq!(row.op(), ChangesetOp::Insert);
+}
+
+// Apply a streamed input onto a replica.
+let mut replica = SqliteConnection::establish(":memory:").unwrap();
+diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+    .execute(&mut replica).unwrap();
+replica.apply_changeset_strm_with(
+    Cursor::new(streamed.clone()),
+    ApplyFlags::empty(),
+    |_| true,
+    |_| ConflictAction::Abort,
+)?;
+
+// Transform helpers stream too.
+let mut inverted = Vec::new();
+invert_changeset_strm(Cursor::new(streamed.clone()), &mut inverted)?;
+
+let mut group = Changegroup::new()?;
+group.add_strm(Cursor::new(streamed.clone()))?;
+let mut merged = Vec::new();
+group.output_strm(&mut merged)?;
+
+// Rebaser too.
+let rebaser = Rebaser::new()?;
+let mut rewritten = Vec::new();
+rebaser.rebase_strm(Cursor::new(streamed), &mut rewritten)?;
+# Ok::<_, Box<dyn std::error::Error>>(())
+```
+
+Reader / writer `io::Error`s propagate as `SessionError::WriterIo`, `ChangesetError::ReaderIo` / `WriterIo`, and `ApplyError::ReaderIo`. Panics are caught by the trampoline and reported as the matching `*Panicked` variant, so unwinding never crosses the FFI boundary.
 
 ## Platform Support
 
@@ -588,7 +623,7 @@ Native and WebAssembly performance numbers, a comparison against rusqlite, and i
 
 ## Related Projects
 
-- **[sqlite-diff-rs](https://github.com/LucaCappelletti94/sqlite-diff-rs)** - Build `SQLite` changesets/patchsets programmatically without requiring `SQLite`. Useful for constructing changesets from other sources (`PostgreSQL` CDC, Debezium, Maxwell) and applying them with diesel-sqlite-session.
+- **[sqlite-diff-rs](https://github.com/LucaCappelletti94/sqlite-diff-rs)**: build `SQLite` changesets and patchsets programmatically without linking `SQLite`. Useful for constructing changesets from other sources (`PostgreSQL` CDC, Debezium, Maxwell) and applying them with `diesel-sqlite-session`.
 
 ## License
 

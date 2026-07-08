@@ -624,40 +624,6 @@ async fn changeset_reader_open_inverted_swaps_insert_and_delete_wasm() {
 }
 
 #[wasm_bindgen_test]
-async fn changeset_reader_open_strm_iterates_a_stream_wasm() {
-    let mut conn = create_connection();
-    setup_table(&mut conn);
-    let mut session = conn.create_session().unwrap();
-    session.attach_all().unwrap();
-    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
-        .execute(&mut conn)
-        .unwrap();
-    let bytes = session.changeset().unwrap();
-    drop(session);
-
-    let mut reader = ChangesetReader::open_strm(std::io::Cursor::new(bytes)).unwrap();
-    let row = reader.next().unwrap().expect("saw a row");
-    assert_eq!(row.op(), ChangesetOp::Insert);
-    assert_eq!(row.table(), "test_items");
-}
-
-#[wasm_bindgen_test]
-async fn session_changeset_strm_matches_buffered_wasm() {
-    let mut conn = create_connection();
-    setup_table(&mut conn);
-    let mut session = conn.create_session().unwrap();
-    session.attach_all().unwrap();
-    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 7)")
-        .execute(&mut conn)
-        .unwrap();
-
-    let buffered = session.changeset().unwrap();
-    let mut streamed = Vec::new();
-    session.changeset_strm(&mut streamed).unwrap();
-    assert_eq!(buffered, streamed);
-}
-
-#[wasm_bindgen_test]
 async fn apply_changeset_with_filter_skips_tables_wasm() {
     let mut source = create_connection();
     sql_query("CREATE TABLE keep_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
@@ -783,31 +749,6 @@ async fn apply_changeset_with_conflict_info_wasm() {
     assert_eq!(observed.1, 1);
     assert_eq!(observed.2, 100);
     assert_eq!(observed.3, 42);
-}
-
-#[wasm_bindgen_test]
-async fn apply_changeset_strm_with_applies_wasm() {
-    let mut source = create_connection();
-    setup_table(&mut source);
-    let mut session = source.create_session().unwrap();
-    session.attach_all().unwrap();
-    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
-        .execute(&mut source)
-        .unwrap();
-    let bytes = session.changeset().unwrap();
-    drop(session);
-
-    let mut replica = create_connection();
-    setup_table(&mut replica);
-    replica
-        .apply_changeset_strm_with(
-            std::io::Cursor::new(bytes),
-            ApplyFlags::empty(),
-            |_| true,
-            |_| ConflictAction::Abort,
-        )
-        .unwrap();
-    assert_eq!(count_rows(&mut replica), 1);
 }
 
 #[wasm_bindgen_test]
@@ -1018,6 +959,65 @@ async fn rebaser_multi_master_convergence_wasm() {
             .get_result(&mut peer_b)
             .unwrap();
     assert_eq!(value_on_a, value_on_b);
+}
+
+#[wasm_bindgen_test]
+async fn session_changeset_strm_matches_buffered_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 7)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let buffered = session.changeset().unwrap();
+    let mut streamed = Vec::new();
+    session.changeset_strm(&mut streamed).unwrap();
+    assert_eq!(buffered, streamed);
+}
+
+#[wasm_bindgen_test]
+async fn changeset_reader_open_strm_iterates_a_stream_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open_strm(std::io::Cursor::new(bytes)).unwrap();
+    let row = reader.next().unwrap().expect("saw a row");
+    assert_eq!(row.op(), ChangesetOp::Insert);
+    assert_eq!(row.table(), "test_items");
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_strm_with_applies_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset_strm_with(
+            std::io::Cursor::new(bytes),
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 1);
 }
 
 #[wasm_bindgen_test]

@@ -465,7 +465,7 @@ where
 /// # Safety
 ///
 /// `ctx_ptr` must point to a live `ApplyV2Context<Filter, Conflict>` and
-/// `iter` must be the iterator SQLite supplies for the current row, both
+/// `iter` must be the iterator `SQLite` supplies for the current row, both
 /// valid for the duration of the call.
 unsafe extern "C" fn conflict_trampoline<Filter, Conflict>(
     ctx_ptr: *mut c_void,
@@ -715,7 +715,7 @@ fn finalize_v3<Filter, Conflict>(
 /// # Safety
 ///
 /// `ctx_ptr` must point to a live `ApplyV2Context<Filter, Conflict>` and
-/// `iter` must be the iterator SQLite supplies for the call.
+/// `iter` must be the iterator `SQLite` supplies for the call.
 unsafe extern "C" fn v3_filter_trampoline<Filter, Conflict>(
     ctx_ptr: *mut c_void,
     iter: *mut sqlite3_changeset_iter,

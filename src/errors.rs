@@ -147,30 +147,30 @@ pub enum SessionError {
     #[error("Table name contains null byte")]
     InvalidTableName,
 
-    /// A streamed writer returned an [`std::io::Error`].
-    #[error("streamed session writer failed: {0}")]
-    WriterIo(std::io::Error),
-
-    /// A streamed writer panicked.
-    #[error("streamed session writer panicked")]
-    WriterPanicked,
-
-    /// `sqlite3session_config` returned a non-`OK` code.
-    #[error("SQLite session config failed: {0}")]
-    ConfigFailed(SqliteErrorCode),
-
-    /// `sqlite3session_diff` returned a non-`OK` code.
-    #[error("SQLite session diff failed ({code}){}", message.as_deref().map(|m| format!(": {m}")).unwrap_or_default())]
+    /// Failed to populate a session via `sqlite3session_diff`.
+    #[error("Failed to diff into session: {code}{}", .message.as_deref().map(|m| format!(" ({m})")).unwrap_or_default())]
     DiffFailed {
-        /// SQLite error code.
+        /// `SQLite` result code.
         code: SqliteErrorCode,
-        /// Optional error message from `pzErrMsg`.
+        /// Error message returned by `sqlite3session_diff`, if any.
         message: Option<String>,
     },
 
     /// `sqlite3session_object_config` returned a non-`OK` code.
-    #[error("SQLite session object config failed: {0}")]
+    #[error("Failed to configure session object: {0}")]
     ObjectConfigFailed(SqliteErrorCode),
+
+    /// `sqlite3session_config` returned a non-`OK` code.
+    #[error("Failed to configure session module: {0}")]
+    ConfigFailed(SqliteErrorCode),
+
+    /// The streamed changeset/patchset writer returned an [`std::io::Error`].
+    #[error("streamed session writer failed: {0}")]
+    WriterIo(#[from] std::io::Error),
+
+    /// The streamed changeset/patchset writer panicked.
+    #[error("streamed session writer panicked")]
+    WriterPanicked,
 }
 
 /// Errors that can occur when applying changesets or patchsets.
@@ -188,15 +188,17 @@ pub enum ApplyError {
     #[error("Conflict handler panicked")]
     ConflictHandlerPanicked,
 
-    /// The filter callback panicked while inspecting a table or row.
-    #[error("Apply filter panicked")]
+    /// The filter callback of
+    /// [`SqliteSessionExt::apply_changeset_with`](crate::SqliteSessionExt::apply_changeset_with)
+    /// panicked while deciding whether to apply a table.
+    #[error("Filter callback panicked")]
     FilterPanicked,
 
-    /// The streamed reader returned an [`std::io::Error`].
+    /// The streamed apply reader returned an [`std::io::Error`].
     #[error("streamed apply reader failed: {0}")]
     ReaderIo(#[from] std::io::Error),
 
-    /// The streamed reader panicked.
+    /// The streamed apply reader panicked.
     #[error("streamed apply reader panicked")]
     ReaderPanicked,
 }

@@ -1,7 +1,7 @@
 //! Integration tests for the `_strm` streamed variants.
 //!
-//! One test per invariant. This file grows as each feature ships its
-//! streamed sibling.
+//! One test per invariant. Every streaming entry point is exercised, plus
+//! the `io::Error` and panic propagation shared across them.
 
 use std::io::{self, Cursor, ErrorKind, Read, Write};
 
@@ -154,7 +154,6 @@ fn changeset_reader_open_inverted_strm_flips_ops() {
     let row = reader.next().unwrap().expect("saw a row");
     assert_eq!(row.op(), ChangesetOp::Delete);
 }
-
 #[test]
 fn changeset_reader_open_strm_defers_reader_io_errors_to_next() {
     // `sqlite3changeset_start_strm` may accept the trampoline without ever
@@ -274,42 +273,6 @@ fn changegroup_add_strm_and_output_strm_round_trip() {
 }
 
 #[test]
-fn changegroup_add_strm_surfaces_reader_panic() {
-    struct PanicRead;
-    impl Read for PanicRead {
-        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-            panic!("panic-inside-reader");
-        }
-    }
-    let mut group = Changegroup::new().unwrap();
-    let err = group.add_strm(PanicRead).unwrap_err();
-    assert!(matches!(err, ChangesetError::ReaderPanicked), "{err:?}");
-}
-
-#[test]
-fn changegroup_output_strm_surfaces_writer_io_error() {
-    struct FailWrite;
-    impl Write for FailWrite {
-        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
-            Err(io::Error::new(ErrorKind::PermissionDenied, "no writes"))
-        }
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    let mut group = Changegroup::new().unwrap();
-    group.add(&make_changeset(&[(1, 10)])).unwrap();
-    let err = group.output_strm(FailWrite).unwrap_err();
-    match err {
-        ChangesetError::WriterIo(inner) => {
-            assert_eq!(inner.kind(), ErrorKind::PermissionDenied);
-        }
-        other => panic!("expected WriterIo, got {other:?}"),
-    }
-}
-
-#[test]
 fn rebaser_rebase_strm_round_trips_through_the_iterator() {
     // Build a rebase blob from a Replace conflict.
     let mut peer_a = fresh_connection();
@@ -368,5 +331,41 @@ fn rebaser_rebase_strm_round_trips_through_the_iterator() {
                 |_| ConflictAction::Abort,
             )
             .expect("apply rewritten bytes on peer A");
+    }
+}
+
+#[test]
+fn changegroup_add_strm_surfaces_reader_panic() {
+    struct PanicRead;
+    impl Read for PanicRead {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            panic!("panic-inside-reader");
+        }
+    }
+    let mut group = Changegroup::new().unwrap();
+    let err = group.add_strm(PanicRead).unwrap_err();
+    assert!(matches!(err, ChangesetError::ReaderPanicked), "{err:?}");
+}
+
+#[test]
+fn changegroup_output_strm_surfaces_writer_io_error() {
+    struct FailWrite;
+    impl Write for FailWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(ErrorKind::PermissionDenied, "no writes"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut group = Changegroup::new().unwrap();
+    group.add(&make_changeset(&[(1, 10)])).unwrap();
+    let err = group.output_strm(FailWrite).unwrap_err();
+    match err {
+        ChangesetError::WriterIo(inner) => {
+            assert_eq!(inner.kind(), ErrorKind::PermissionDenied);
+        }
+        other => panic!("expected WriterIo, got {other:?}"),
     }
 }
