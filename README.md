@@ -156,6 +156,28 @@ let has_changes = !session.is_empty();
 session.set_enabled(false);
 ```
 
+`session.changeset()` and `session.patchset()` return owned `Vec<u8>`. Their `_strm` siblings pump the bytes through any `std::io::Write` instead, so a large changeset can flow directly into a `File`, `TcpStream`, or a compressor without materializing the whole blob in memory. The module-level `stream_size` / `set_stream_size` control the default chunk size `SQLite` uses across all streamed variants in this crate.
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{set_stream_size, stream_size, SqliteSessionExt};
+
+# let mut conn = SqliteConnection::establish(":memory:").unwrap();
+# diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+#     .execute(&mut conn).unwrap();
+# let mut session = conn.create_session().unwrap();
+# session.attach_all().unwrap();
+# diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 100)")
+#     .execute(&mut conn).unwrap();
+let mut streamed = Vec::new();
+session.changeset_strm(&mut streamed)?;
+
+let default_chunk = stream_size()?;
+set_stream_size(64 * 1024)?;
+# set_stream_size(default_chunk).unwrap();
+# Ok::<_, diesel_sqlite_session::SessionError>(())
+```
+
 ### Conflict Handling
 
 When applying changesets/patchsets, conflicts are handled via callback:

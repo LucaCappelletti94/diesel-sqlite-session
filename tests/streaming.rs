@@ -1,14 +1,15 @@
 //! Integration tests for the `_strm` streamed variants.
 //!
 //! One test per invariant. This file grows as each feature ships its
-//! streamed sibling. Commit 3 lands `ChangesetReader::open_strm` /
-//! `open_inverted_strm`.
+//! streamed sibling.
 
-use std::io::{self, Cursor, ErrorKind, Read};
+use std::io::{self, Cursor, ErrorKind, Read, Write};
 
 use diesel::prelude::*;
 use diesel::sql_query;
-use diesel_sqlite_session::{ChangesetError, ChangesetOp, ChangesetReader, SqliteSessionExt};
+use diesel_sqlite_session::{
+    ChangesetError, ChangesetOp, ChangesetReader, SessionError, SqliteSessionExt,
+};
 
 fn fresh_connection() -> SqliteConnection {
     SqliteConnection::establish(":memory:").expect("open in-memory database")
@@ -32,6 +33,96 @@ fn make_changeset(rows: &[(i64, i64)]) -> Vec<u8> {
             .unwrap();
     }
     session.changeset().unwrap()
+}
+
+#[test]
+fn session_changeset_strm_writes_the_same_bytes_as_the_buffered_variant() {
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut conn)
+        .unwrap();
+
+    // Buffered reference bytes first.
+    let reference = session.changeset().unwrap();
+
+    // Stream into a Vec<u8> through a Cursor writer.
+    let mut streamed = Vec::new();
+    session
+        .changeset_strm(&mut streamed)
+        .expect("changeset_strm");
+
+    assert_eq!(reference, streamed, "streamed bytes match buffered bytes");
+}
+
+#[test]
+fn session_patchset_strm_writes_a_nonempty_buffer() {
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 42)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let mut streamed = Vec::new();
+    session.patchset_strm(&mut streamed).unwrap();
+    assert!(!streamed.is_empty());
+}
+
+#[test]
+fn session_changeset_strm_surfaces_writer_io_errors() {
+    struct FailWrite;
+    impl Write for FailWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(ErrorKind::BrokenPipe, "test-writer-failed"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let err = session.changeset_strm(FailWrite).unwrap_err();
+    match err {
+        SessionError::WriterIo(inner) => {
+            assert_eq!(inner.kind(), ErrorKind::BrokenPipe);
+        }
+        other => panic!("expected WriterIo, got {other:?}"),
+    }
+}
+
+#[test]
+fn session_changeset_strm_surfaces_writer_panics() {
+    struct PanicWrite;
+    impl Write for PanicWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            panic!("panic-inside-writer");
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let err = session.changeset_strm(PanicWrite).unwrap_err();
+    assert!(matches!(err, SessionError::WriterPanicked), "{err:?}");
 }
 
 #[test]

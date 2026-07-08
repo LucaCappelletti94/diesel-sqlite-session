@@ -19,7 +19,7 @@ pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError, SqliteE
 pub use preupdate::{
     PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateHook, PreUpdateOp, PreUpdateValue,
 };
-pub use session::Session;
+pub use session::{set_stream_size, stream_size, Session};
 
 use diesel::SqliteConnection;
 

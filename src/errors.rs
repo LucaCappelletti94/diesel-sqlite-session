@@ -146,6 +146,18 @@ pub enum SessionError {
     /// Table name contains invalid characters.
     #[error("Table name contains null byte")]
     InvalidTableName,
+
+    /// A streamed writer returned an [`std::io::Error`].
+    #[error("streamed session writer failed: {0}")]
+    WriterIo(std::io::Error),
+
+    /// A streamed writer panicked.
+    #[error("streamed session writer panicked")]
+    WriterPanicked,
+
+    /// `sqlite3session_config` returned a non-`OK` code.
+    #[error("SQLite session config failed: {0}")]
+    ConfigFailed(SqliteErrorCode),
 }
 
 /// Errors that can occur when applying changesets or patchsets.

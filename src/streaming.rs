@@ -1,14 +1,15 @@
 //! Shared trampolines for the streamed variants of the session extension.
 //!
-//! Each streamed `SQLite` reader takes an `xInput` callback. The generic
-//! trampoline here bridges that C signature to [`std::io::Read`]: every
-//! streamed reader packs the user's `R` into an [`InputContext`] and hands
+//! Each streamed `SQLite` function takes an `xInput` / `xOutput` callback
+//! pair. The generic trampolines here bridge those C signatures to
+//! [`std::io::Read`] / [`std::io::Write`]: every streamed method packs the
+//! user's `R` or `W` into an [`InputContext`] / [`OutputContext`] and hands
 //! `SQLite` a pointer to that context. Panics inside the user's stream are
 //! caught and mapped to `SQLITE_IOERR` so unwinding never crosses the FFI
 //! boundary.
 
 use std::ffi::{c_int, c_void};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use crate::ffi::{SQLITE_IOERR, SQLITE_OK};
@@ -27,6 +28,23 @@ impl<R: Read> InputContext<R> {
     pub(crate) fn new(reader: R) -> Self {
         Self {
             reader,
+            error: None,
+            panicked: false,
+        }
+    }
+}
+
+/// User's writer plus sticky error / panic slots (mirrors [`InputContext`]).
+pub(crate) struct OutputContext<W: Write> {
+    pub(crate) writer: W,
+    pub(crate) error: Option<std::io::Error>,
+    pub(crate) panicked: bool,
+}
+
+impl<W: Write> OutputContext<W> {
+    pub(crate) fn new(writer: W) -> Self {
+        Self {
+            writer,
             error: None,
             panicked: false,
         }
@@ -82,6 +100,44 @@ where
             ctx.panicked = true;
             // SAFETY: `p_n_data` is a valid `int*` per the FFI contract.
             unsafe { *p_n_data = 0 };
+            SQLITE_IOERR
+        }
+    }
+}
+
+/// C trampoline for `xOutput`.
+///
+/// # Safety
+///
+/// `ctx` must point to a live [`OutputContext<W>`]. `data` must be readable
+/// for `n_data` bytes for the duration of the call.
+pub(crate) unsafe extern "C" fn write_trampoline<W>(
+    ctx: *mut c_void,
+    data: *const c_void,
+    n_data: c_int,
+) -> c_int
+where
+    W: Write,
+{
+    // SAFETY: `ctx` matches the type we installed.
+    let ctx = unsafe { &mut *(ctx.cast::<OutputContext<W>>()) };
+    if ctx.error.is_some() || ctx.panicked {
+        return SQLITE_IOERR;
+    }
+    let n = usize::try_from(n_data).unwrap_or(0);
+    if n == 0 {
+        return SQLITE_OK;
+    }
+    // SAFETY: SQLite promises `data` is readable for `n` bytes.
+    let buf = unsafe { std::slice::from_raw_parts(data.cast::<u8>(), n) };
+    match catch_unwind(AssertUnwindSafe(|| ctx.writer.write_all(buf))) {
+        Ok(Ok(())) => SQLITE_OK,
+        Ok(Err(e)) => {
+            ctx.error = Some(e);
+            SQLITE_IOERR
+        }
+        Err(_) => {
+            ctx.panicked = true;
             SQLITE_IOERR
         }
     }

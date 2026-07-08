@@ -11,8 +11,9 @@ use diesel::SqliteConnection;
 use crate::errors::{SessionError, SqliteErrorCode};
 use crate::ffi::{
     sqlite3_free, sqlite3_session, sqlite3session_attach, sqlite3session_changeset,
-    sqlite3session_create, sqlite3session_delete, sqlite3session_enable, sqlite3session_isempty,
-    sqlite3session_patchset, SQLITE_OK,
+    sqlite3session_changeset_strm, sqlite3session_config, sqlite3session_create,
+    sqlite3session_delete, sqlite3session_enable, sqlite3session_isempty, sqlite3session_patchset,
+    sqlite3session_patchset_strm, SQLITE_OK, SQLITE_SESSION_CONFIG_STRMSIZE,
 };
 
 /// A session tracking changes on a Diesel `SQLite` connection.
@@ -214,6 +215,84 @@ impl Session {
         self.export_changes(sqlite3session_patchset, SessionError::PatchsetFailed)
     }
 
+    /// Stream a changeset into `writer` (`sqlite3session_changeset_strm`).
+    /// Lets callers pipe the bytes SQLite would otherwise pack into an owned
+    /// buffer through a `File`, `TcpStream`, or any other writer.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::ChangesetFailed`] on any `SQLite` failure, including
+    /// `SQLITE_IOERR` from the trampoline when the writer errored or panicked.
+    pub fn changeset_strm<W>(&mut self, writer: W) -> Result<(), SessionError>
+    where
+        W: std::io::Write,
+    {
+        self.export_strm(
+            writer,
+            sqlite3session_changeset_strm,
+            SessionError::ChangesetFailed,
+        )
+    }
+
+    /// Stream a patchset into `writer` (`sqlite3session_patchset_strm`).
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::PatchsetFailed`] on any `SQLite` failure, including
+    /// `SQLITE_IOERR` from the trampoline when the writer errored or panicked.
+    pub fn patchset_strm<W>(&mut self, writer: W) -> Result<(), SessionError>
+    where
+        W: std::io::Write,
+    {
+        self.export_strm(
+            writer,
+            sqlite3session_patchset_strm,
+            SessionError::PatchsetFailed,
+        )
+    }
+
+    fn export_strm<W>(
+        &mut self,
+        writer: W,
+        export_fn: unsafe extern "C" fn(
+            *mut sqlite3_session,
+            Option<
+                unsafe extern "C" fn(
+                    *mut std::ffi::c_void,
+                    *const std::ffi::c_void,
+                    std::ffi::c_int,
+                ) -> std::ffi::c_int,
+            >,
+            *mut std::ffi::c_void,
+        ) -> std::ffi::c_int,
+        map_error: fn(SqliteErrorCode) -> SessionError,
+    ) -> Result<(), SessionError>
+    where
+        W: std::io::Write,
+    {
+        let mut ctx = crate::streaming::OutputContext::new(writer);
+        let ptr = std::ptr::addr_of_mut!(ctx).cast::<std::ffi::c_void>();
+        // SAFETY: `self.session` outlives the call, and `ctx` lives on this
+        // stack frame so `ptr` is stable throughout.
+        let rc = unsafe {
+            export_fn(
+                self.session,
+                Some(crate::streaming::write_trampoline::<W>),
+                ptr,
+            )
+        };
+        if let Some(err) = ctx.error.take() {
+            return Err(SessionError::WriterIo(err));
+        }
+        if ctx.panicked {
+            return Err(SessionError::WriterPanicked);
+        }
+        if rc != SQLITE_OK {
+            return Err(map_error(SqliteErrorCode::from_error(rc)));
+        }
+        Ok(())
+    }
+
     /// Check if the session has recorded any changes.
     ///
     /// Returns `true` if no changes have been recorded, `false` otherwise.
@@ -283,4 +362,38 @@ impl Drop for Session {
             sqlite3session_delete(self.session);
         }
     }
+}
+
+/// Change the module-wide default streaming chunk size for streamed
+/// changeset APIs (`sqlite3session_config` + `SQLITE_SESSION_CONFIG_STRMSIZE`).
+/// Only `size > 0` is applied; other values are treated as a query by SQLite.
+///
+/// # Errors
+///
+/// [`SessionError::ConfigFailed`] if `SQLite` refuses the option.
+pub fn set_stream_size(size: i32) -> Result<(), SessionError> {
+    let mut val: c_int = size;
+    config(SQLITE_SESSION_CONFIG_STRMSIZE, &mut val)
+}
+
+/// Read the current module-level default streaming chunk size.
+///
+/// # Errors
+///
+/// [`SessionError::ConfigFailed`] if `SQLite` refuses the option.
+pub fn stream_size() -> Result<i32, SessionError> {
+    let mut val: c_int = 0;
+    config(SQLITE_SESSION_CONFIG_STRMSIZE, &mut val)?;
+    Ok(val)
+}
+
+/// Shared body for `sqlite3session_config` calls.
+fn config(op: c_int, val: &mut c_int) -> Result<(), SessionError> {
+    // SAFETY: `sqlite3session_config` treats the pointer as an `int*` for the
+    // duration of the call.
+    let rc = unsafe { sqlite3session_config(op, ptr::addr_of_mut!(*val).cast::<c_void>()) };
+    if rc != SQLITE_OK {
+        return Err(SessionError::ConfigFailed(SqliteErrorCode::from_error(rc)));
+    }
+    Ok(())
 }

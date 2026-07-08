@@ -639,3 +639,19 @@ async fn changeset_reader_open_strm_iterates_a_stream_wasm() {
     assert_eq!(row.op(), ChangesetOp::Insert);
     assert_eq!(row.table(), "test_items");
 }
+
+#[wasm_bindgen_test]
+async fn session_changeset_strm_matches_buffered_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 7)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let buffered = session.changeset().unwrap();
+    let mut streamed = Vec::new();
+    session.changeset_strm(&mut streamed).unwrap();
+    assert_eq!(buffered, streamed);
+}
