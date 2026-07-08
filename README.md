@@ -404,6 +404,51 @@ let _merged = group.output()?;
 
 `Changegroup::set_schema` binds a connection so the group can reconcile `WITHOUT ROWID` tables and per-table column types. Plain rowid changesets fold in without one. `Changegroup` is `!Send + !Sync`. Drop it before the connection that any attached schema refers to.
 
+### Session Controls
+
+`Session` grew extension methods wrapping the rest of the session extension:
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{set_stream_size, stream_size, SqliteSessionExt};
+
+let mut conn = SqliteConnection::establish(":memory:").unwrap();
+diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+    .execute(&mut conn).unwrap();
+// The `diff` demo needs a second, non-empty database to diff against. Attach
+// an in-memory DB as `aux` and mirror the schema plus a distinct row.
+diesel::sql_query("ATTACH DATABASE ':memory:' AS aux")
+    .execute(&mut conn).unwrap();
+diesel::sql_query("CREATE TABLE aux.items (id INTEGER PRIMARY KEY, v INTEGER)")
+    .execute(&mut conn).unwrap();
+diesel::sql_query("INSERT INTO aux.items (id, v) VALUES (2, 200)")
+    .execute(&mut conn).unwrap();
+
+let mut session = conn.create_session().unwrap();
+session.set_size_tracking(true).unwrap();
+session.set_rowid_tracking(true).unwrap();
+session.set_indirect(true);
+session.set_table_filter(|table| table != "audit_log");
+session.attach_all().unwrap();
+
+diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 100)")
+    .execute(&mut conn).unwrap();
+
+let est = session.changeset_size();
+let mem = session.memory_used();
+println!("estimated {est} bytes / holding {mem} bytes in memory");
+
+// Populate the session with the delta between `aux.items` and `main.items`.
+session.diff("aux", "items").unwrap();
+
+// Global default streaming chunk size (see the streamed changeset APIs).
+let default_chunk = stream_size().unwrap();
+set_stream_size(64 * 1024).unwrap();
+# set_stream_size(default_chunk).unwrap();
+```
+
+`set_indirect(true)` tags subsequent changes as indirect (readable via `ChangesetRow::indirect()`). `set_table_filter(cb)` swaps in a callback consulted by `attach_all` and `diff`, replacing any previous filter. `set_size_tracking(true)` is required before `changeset_size()` returns non-zero. `set_rowid_tracking(true)` enables `WITHOUT ROWID` tracking. `diff(db, table)` populates the session with the delta between an attached database's table and its same-named counterpart in the session's own database. `stream_size` / `set_stream_size` control the module-wide default chunk size used by streamed APIs.
+
 ## Platform Support
 
 | Platform | Backend | Status |

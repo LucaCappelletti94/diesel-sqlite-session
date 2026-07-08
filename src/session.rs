@@ -1,7 +1,8 @@
 //! `SQLite` session management for Diesel connections.
 
-use std::ffi::{c_int, c_void, CString};
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::marker::PhantomData;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::rc::Rc;
 
@@ -11,9 +12,12 @@ use diesel::SqliteConnection;
 use crate::errors::{SessionError, SqliteErrorCode};
 use crate::ffi::{
     sqlite3_free, sqlite3_session, sqlite3session_attach, sqlite3session_changeset,
-    sqlite3session_changeset_strm, sqlite3session_config, sqlite3session_create,
-    sqlite3session_delete, sqlite3session_enable, sqlite3session_isempty, sqlite3session_patchset,
-    sqlite3session_patchset_strm, SQLITE_OK, SQLITE_SESSION_CONFIG_STRMSIZE,
+    sqlite3session_changeset_size, sqlite3session_changeset_strm, sqlite3session_config,
+    sqlite3session_create, sqlite3session_delete, sqlite3session_diff, sqlite3session_enable,
+    sqlite3session_indirect, sqlite3session_isempty, sqlite3session_memory_used,
+    sqlite3session_object_config, sqlite3session_patchset, sqlite3session_patchset_strm,
+    sqlite3session_table_filter, SQLITE_OK, SQLITE_SESSION_CONFIG_STRMSIZE,
+    SQLITE_SESSION_OBJCONFIG_ROWID, SQLITE_SESSION_OBJCONFIG_SIZE,
 };
 
 /// A session tracking changes on a Diesel `SQLite` connection.
@@ -74,9 +78,17 @@ use crate::ffi::{
 /// let patchset = session.patchset().unwrap();
 /// assert!(!patchset.is_empty());
 /// ```
+#[allow(clippy::struct_field_names)]
 pub struct Session {
     session: *mut sqlite3_session,
+    /// Owned closure kept alive while the filter is registered. Double-boxed
+    /// so `pCtx` gets a stable heap address that survives moves of `Session`.
+    table_filter: Option<Box<FilterBox>>,
     _not_send_or_sync: PhantomData<Rc<()>>,
+}
+
+struct FilterBox {
+    call: Box<dyn FnMut(&str) -> bool + Send>,
 }
 
 type SessionExportFn =
@@ -112,6 +124,7 @@ impl Session {
 
         Ok(Self {
             session,
+            table_filter: None,
             _not_send_or_sync: PhantomData,
         })
     }
@@ -315,6 +328,167 @@ impl Session {
         }
     }
 
+    /// Populate this session with the delta between `table` in
+    /// `from_database` and the same-named table on the connection's own
+    /// database (`sqlite3session_diff`). The filter installed by
+    /// [`set_table_filter`](Self::set_table_filter), if any, is consulted.
+    ///
+    /// # Errors
+    ///
+    /// - [`SessionError::InvalidTableName`] if either name contains a null byte.
+    /// - [`SessionError::DiffFailed`] on any `SQLite`-reported error, carrying
+    ///   any message SQLite wrote into `pzErrMsg`.
+    pub fn diff(&mut self, from_database: &str, table: &str) -> Result<(), SessionError> {
+        let c_from = CString::new(from_database).map_err(|_| SessionError::InvalidTableName)?;
+        let c_table = CString::new(table).map_err(|_| SessionError::InvalidTableName)?;
+        let mut err_msg: *mut c_char = ptr::null_mut();
+        // SAFETY: `self.session` is a live handle, both `CString`s outlive the
+        // call, and `err_msg` is a valid out-pointer.
+        let rc = unsafe {
+            sqlite3session_diff(
+                self.session,
+                c_from.as_ptr(),
+                c_table.as_ptr(),
+                &mut err_msg,
+            )
+        };
+        let message = if err_msg.is_null() {
+            None
+        } else {
+            // SAFETY: `err_msg` is a NUL-terminated C string sqlite_malloc'd.
+            let owned = unsafe { CStr::from_ptr(err_msg) }
+                .to_string_lossy()
+                .into_owned();
+            // SAFETY: `sqlite3_malloc`-allocated buffer.
+            unsafe { sqlite3_free(err_msg.cast::<c_void>()) };
+            Some(owned)
+        };
+        if rc != SQLITE_OK {
+            return Err(SessionError::DiffFailed {
+                code: SqliteErrorCode::from_error(rc),
+                message,
+            });
+        }
+        Ok(())
+    }
+
+    /// Set the "indirect" flag: subsequent changes are tagged as indirect
+    /// (`sqlite3session_indirect`; read back via
+    /// [`ChangesetRow::indirect`](crate::ChangesetRow::indirect)).
+    pub fn set_indirect(&mut self, indirect: bool) {
+        // SAFETY: `self.session` is a live handle.
+        unsafe {
+            sqlite3session_indirect(self.session, i32::from(indirect));
+        }
+    }
+
+    /// Read the current "indirect" flag without changing it.
+    #[must_use]
+    pub fn is_indirect(&self) -> bool {
+        // Passing -1 queries the current flag without changing it.
+        // SAFETY: `self.session` is a live handle.
+        unsafe { sqlite3session_indirect(self.session, -1) != 0 }
+    }
+
+    /// Register a filter consulted before each auto-attached table
+    /// (`sqlite3session_table_filter`). Called from
+    /// [`attach_all`](Self::attach_all) and [`diff`](Self::diff); return
+    /// `true` to track the table, `false` to skip. Explicit
+    /// [`attach`](Self::attach) / [`attach_by_name`](Self::attach_by_name)
+    /// bypass the filter. Installing a new filter replaces the previous one;
+    /// panics inside the callback are caught by the trampoline and reported
+    /// to `SQLite` as "skip this table".
+    pub fn set_table_filter<F>(&mut self, filter: F)
+    where
+        F: FnMut(&str) -> bool + Send + 'static,
+    {
+        let boxed = Box::new(FilterBox {
+            call: Box::new(filter),
+        });
+        let ptr: *mut c_void = ptr::addr_of!(*boxed).cast::<c_void>().cast_mut();
+        // SAFETY: `self.session` outlives the call; `boxed` is stored on
+        // `self.table_filter` before returning, so `ptr` stays valid. The
+        // old Box is dropped only after SQLite has switched callbacks.
+        unsafe {
+            sqlite3session_table_filter(self.session, Some(filter_trampoline), ptr);
+        }
+        self.table_filter = Some(boxed);
+    }
+
+    /// Remove any table filter previously installed with
+    /// [`set_table_filter`](Self::set_table_filter).
+    pub fn remove_table_filter(&mut self) {
+        // SAFETY: `self.session` is a live handle.
+        unsafe {
+            sqlite3session_table_filter(self.session, None, ptr::null_mut());
+        }
+        self.table_filter = None;
+    }
+
+    /// Enable or disable per-session size tracking
+    /// (`SQLITE_SESSION_OBJCONFIG_SIZE`). Required before
+    /// [`changeset_size`](Self::changeset_size) reports non-zero.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::ObjectConfigFailed`] if `SQLite` refuses the option.
+    pub fn set_size_tracking(&mut self, enabled: bool) -> Result<(), SessionError> {
+        let mut val: c_int = i32::from(enabled);
+        object_config(self.session, SQLITE_SESSION_OBJCONFIG_SIZE, &mut val)
+    }
+
+    /// Read the current size-tracking setting.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::ObjectConfigFailed`] if `SQLite` refuses the option.
+    pub fn is_size_tracking_enabled(&self) -> Result<bool, SessionError> {
+        let mut val: c_int = -1;
+        object_config(self.session, SQLITE_SESSION_OBJCONFIG_SIZE, &mut val)?;
+        Ok(val != 0)
+    }
+
+    /// Enable or disable tracking of `WITHOUT ROWID` tables
+    /// (`SQLITE_SESSION_OBJCONFIG_ROWID`).
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::ObjectConfigFailed`] if `SQLite` refuses the option.
+    pub fn set_rowid_tracking(&mut self, enabled: bool) -> Result<(), SessionError> {
+        let mut val: c_int = i32::from(enabled);
+        object_config(self.session, SQLITE_SESSION_OBJCONFIG_ROWID, &mut val)
+    }
+
+    /// Read the current `WITHOUT ROWID` tracking setting.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::ObjectConfigFailed`] if `SQLite` refuses the option.
+    pub fn is_rowid_tracking_enabled(&self) -> Result<bool, SessionError> {
+        let mut val: c_int = -1;
+        object_config(self.session, SQLITE_SESSION_OBJCONFIG_ROWID, &mut val)?;
+        Ok(val != 0)
+    }
+
+    /// Bytes of memory currently held by this session's change log
+    /// (`sqlite3session_memory_used`).
+    #[must_use]
+    pub fn memory_used(&self) -> u64 {
+        // SAFETY: `self.session` is a live handle.
+        let n = unsafe { sqlite3session_memory_used(self.session) };
+        u64::try_from(n).unwrap_or(0)
+    }
+
+    /// Estimated bytes the changeset for this session would occupy
+    /// (`sqlite3session_changeset_size`). Accurate only after
+    /// [`set_size_tracking(true)`](Self::set_size_tracking).
+    #[must_use]
+    pub fn changeset_size(&self) -> u64 {
+        // SAFETY: `self.session` is a live handle.
+        let n = unsafe { sqlite3session_changeset_size(self.session) };
+        u64::try_from(n).unwrap_or(0)
+    }
+
     fn export_changes(
         &mut self,
         export_fn: SessionExportFn,
@@ -356,8 +530,14 @@ impl Session {
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // SAFETY: `self.session` is owned by this type and must be released
-        // exactly once with `sqlite3session_delete`.
+        // Unhook the filter first so no callback fires against a half-dead
+        // handle. Matches the pattern used elsewhere in this crate.
+        // SAFETY: `self.session` is a live handle owned by this `Session`.
+        unsafe {
+            sqlite3session_table_filter(self.session, None, ptr::null_mut());
+        }
+        // SAFETY: `self.session` must be released exactly once via
+        // `sqlite3session_delete`.
         unsafe {
             sqlite3session_delete(self.session);
         }
@@ -396,4 +576,45 @@ fn config(op: c_int, val: &mut c_int) -> Result<(), SessionError> {
         return Err(SessionError::ConfigFailed(SqliteErrorCode::from_error(rc)));
     }
     Ok(())
+}
+
+/// Shared body for `sqlite3session_object_config` setters and getters.
+fn object_config(
+    session: *mut sqlite3_session,
+    op: c_int,
+    val: &mut c_int,
+) -> Result<(), SessionError> {
+    // SAFETY: `session` is a live handle and `val` is a valid pointer to an
+    // `int` for the duration of the call.
+    let rc = unsafe {
+        sqlite3session_object_config(session, op, ptr::addr_of_mut!(*val).cast::<c_void>())
+    };
+    if rc != SQLITE_OK {
+        return Err(SessionError::ObjectConfigFailed(
+            SqliteErrorCode::from_error(rc),
+        ));
+    }
+    Ok(())
+}
+
+/// C trampoline for `sqlite3session_table_filter`.
+///
+/// # Safety
+///
+/// `ctx` must point to a live `FilterBox` and `table_ptr` must either be null
+/// or a valid C string for the duration of the call.
+unsafe extern "C" fn filter_trampoline(ctx: *mut c_void, table_ptr: *const c_char) -> c_int {
+    // SAFETY: `ctx` is the pointer we handed to `sqlite3session_table_filter`,
+    // pointing at a `FilterBox` we still own.
+    let filter = unsafe { &mut *(ctx.cast::<FilterBox>()) };
+    let table = if table_ptr.is_null() {
+        ""
+    } else {
+        // SAFETY: non-null `table_ptr` is a valid C string per the FFI contract.
+        unsafe { CStr::from_ptr(table_ptr) }.to_str().unwrap_or("")
+    };
+    match catch_unwind(AssertUnwindSafe(|| (filter.call)(table))) {
+        Ok(true) => 1,
+        Ok(false) | Err(_) => 0,
+    }
 }

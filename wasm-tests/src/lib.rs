@@ -895,3 +895,66 @@ async fn changegroup_aggregates_and_replays_wasm() {
         .unwrap();
     assert_eq!(count_rows(&mut replica), 2);
 }
+
+#[wasm_bindgen_test]
+async fn session_indirect_round_trip_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    assert!(!session.is_indirect());
+    session.set_indirect(true);
+    assert!(session.is_indirect());
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&bytes).unwrap();
+    let row = reader.next().unwrap().expect("saw a row");
+    assert!(row.indirect(), "indirect flag serialized");
+}
+
+#[wasm_bindgen_test]
+async fn session_table_filter_filters_attach_all_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    sql_query("CREATE TABLE skip_wasm2 (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let mut session = conn.create_session().unwrap();
+    session.set_table_filter(|table| table != "skip_wasm2");
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO skip_wasm2 (id, v) VALUES (7, 7)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&bytes).unwrap();
+    let mut tables: Vec<String> = Vec::new();
+    while let Some(row) = reader.next().unwrap() {
+        tables.push(row.table().to_owned());
+    }
+    assert!(tables.contains(&"test_items".to_string()));
+    assert!(!tables.contains(&"skip_wasm2".to_string()));
+}
+
+#[wasm_bindgen_test]
+async fn session_size_tracking_reports_nonzero_changeset_size_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.set_size_tracking(true).unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 42)")
+        .execute(&mut conn)
+        .unwrap();
+    assert!(session.changeset_size() > 0);
+    assert!(session.memory_used() > 0);
+}

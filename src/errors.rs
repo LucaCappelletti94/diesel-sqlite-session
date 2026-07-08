@@ -158,6 +158,19 @@ pub enum SessionError {
     /// `sqlite3session_config` returned a non-`OK` code.
     #[error("SQLite session config failed: {0}")]
     ConfigFailed(SqliteErrorCode),
+
+    /// `sqlite3session_diff` returned a non-`OK` code.
+    #[error("SQLite session diff failed ({code}){}", message.as_deref().map(|m| format!(": {m}")).unwrap_or_default())]
+    DiffFailed {
+        /// SQLite error code.
+        code: SqliteErrorCode,
+        /// Optional error message from `pzErrMsg`.
+        message: Option<String>,
+    },
+
+    /// `sqlite3session_object_config` returned a non-`OK` code.
+    #[error("SQLite session object config failed: {0}")]
+    ObjectConfigFailed(SqliteErrorCode),
 }
 
 /// Errors that can occur when applying changesets or patchsets.
