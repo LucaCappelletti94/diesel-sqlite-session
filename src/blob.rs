@@ -96,6 +96,37 @@ pub enum BlobError {
 ///
 /// See the module-level docs for the safety contract.
 ///
+/// # Example
+///
+/// ```
+/// use diesel::prelude::*;
+/// use diesel_sqlite_session::{BlobMode, SqliteSessionExt};
+///
+/// let mut conn = SqliteConnection::establish(":memory:").unwrap();
+/// diesel::sql_query("CREATE TABLE photos (id INTEGER PRIMARY KEY, data BLOB)")
+///     .execute(&mut conn)
+///     .unwrap();
+/// diesel::sql_query("INSERT INTO photos (id, data) VALUES (1, zeroblob(16))")
+///     .execute(&mut conn)
+///     .unwrap();
+///
+/// let blob = conn
+///     .open_blob("main", "photos", "data", 1, BlobMode::ReadWrite)
+///     .unwrap();
+/// assert_eq!(blob.len(), 16);
+/// blob.write_at(4, b"HelloBlob").unwrap();
+/// let mut echo = [0u8; 9];
+/// blob.read_at(4, &mut echo).unwrap();
+/// assert_eq!(&echo, b"HelloBlob");
+/// blob.close().unwrap();
+/// ```
+///
+/// `SqliteBlob` is `!Send + !Sync` and RAII with the same "drop before the
+/// connection" contract as [`crate::Session`] and [`crate::PreUpdateHook`].
+/// `write_at` on a `ReadOnly` handle short-circuits to
+/// [`BlobError::ReadOnly`] without touching `SQLite`. `close(self)` surfaces
+/// the result of `sqlite3_blob_close`. `Drop` closes silently.
+///
 /// ```compile_fail
 /// fn assert_send<T: Send>() {}
 /// use diesel_sqlite_session::SqliteBlob;

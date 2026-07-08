@@ -10,11 +10,11 @@
 //! use diesel_sqlite_session::{ChangesetOp, ChangesetReader, SqliteSessionExt};
 //!
 //! let mut conn = SqliteConnection::establish(":memory:").unwrap();
-//! diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+//! diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
 //!     .execute(&mut conn).unwrap();
 //! let mut session = conn.create_session().unwrap();
 //! session.attach_all().unwrap();
-//! diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+//! diesel::sql_query("INSERT INTO items (id, name) VALUES (1, 'Widget')")
 //!     .execute(&mut conn).unwrap();
 //! let changeset = session.changeset().unwrap();
 //! drop(session);
@@ -22,12 +22,20 @@
 //! let mut reader = ChangesetReader::open(&changeset).unwrap();
 //! while let Some(row) = reader.next().unwrap() {
 //!     match row.op() {
-//!         ChangesetOp::Insert => println!("insert into {}", row.table()),
+//!         ChangesetOp::Insert => {
+//!             let name = row.new_value(1).unwrap().and_then(|v| v.as_text().map(str::to_owned));
+//!             println!("insert into {} name={:?}", row.table(), name);
+//!         }
 //!         ChangesetOp::Update => println!("update on {}", row.table()),
 //!         ChangesetOp::Delete => println!("delete from {}", row.table()),
 //!     }
 //! }
 //! ```
+//!
+//! [`ChangesetReader::open_inverted`] walks the inverse: `INSERT` reads as
+//! `DELETE` and `UPDATE` swaps old and new. [`ChangesetReader::open_strm`]
+//! and [`ChangesetReader::open_inverted_strm`] take any [`std::io::Read`]
+//! for changesets that would not fit in memory.
 
 use std::ffi::{c_char, c_int, c_uchar, c_void, CStr};
 use std::marker::PhantomData;

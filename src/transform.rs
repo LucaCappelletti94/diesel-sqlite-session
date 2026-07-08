@@ -2,6 +2,42 @@
 //! and the `Changegroup` n-way merge. Wraps `sqlite3changeset_invert`,
 //! `sqlite3changeset_concat`, and the `sqlite3changegroup_*` family, plus the
 //! `sqlite3rebaser_*` bindings used by [`Rebaser`].
+//!
+//! # Example
+//!
+//! ```
+//! use diesel::prelude::*;
+//! use diesel_sqlite_session::{
+//!     concat_changesets, invert_changeset, Changegroup, SqliteSessionExt,
+//! };
+//!
+//! # let mut conn = SqliteConnection::establish(":memory:").unwrap();
+//! # diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+//! #     .execute(&mut conn).unwrap();
+//! # let mut make = |val: i64| -> Vec<u8> {
+//! #     let mut s = conn.create_session().unwrap();
+//! #     s.attach_all().unwrap();
+//! #     diesel::sql_query(format!("INSERT OR REPLACE INTO t (id, v) VALUES (1, {val})"))
+//! #         .execute(&mut conn).unwrap();
+//! #     s.changeset().unwrap()
+//! # };
+//! # let changeset_a = make(10);
+//! # let changeset_b = make(20);
+//! # let changeset_c = make(30);
+//! // Invert a changeset (undo semantics).
+//! let inverted = invert_changeset(&changeset_a).unwrap();
+//!
+//! // Concat two changesets (must be in order).
+//! let combined = concat_changesets(&changeset_a, &changeset_b).unwrap();
+//!
+//! // Merge many, deduplicating rowid updates.
+//! let mut cg = Changegroup::new().unwrap();
+//! cg.add(&changeset_a).unwrap();
+//! cg.add(&changeset_b).unwrap();
+//! cg.add(&changeset_c).unwrap();
+//! let merged = cg.output().unwrap();
+//! # let _ = (inverted, combined, merged);
+//! ```
 
 use std::ffi::{c_int, c_void, CString};
 use std::marker::PhantomData;
@@ -509,6 +545,41 @@ impl std::fmt::Debug for Changegroup {
 ///    already resolved the earlier conflict.
 ///
 /// [`Rebaser`] is `!Send + !Sync`, like every other RAII handle here.
+///
+/// # Example
+///
+/// ```
+/// use diesel::prelude::*;
+/// use diesel_sqlite_session::{
+///     ApplyFlags, ConflictAction, ConflictType, Rebaser, SqliteSessionExt,
+/// };
+///
+/// # let mut conn = SqliteConnection::establish(":memory:").unwrap();
+/// # diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+/// #     .execute(&mut conn).unwrap();
+/// # let cs_from_peer_a: Vec<u8> = vec![];
+/// # let mut outbound_from_peer_b: Vec<u8> = vec![];
+/// // Node B applies node A's changeset with Replace, harvesting a rebase.
+/// let outcome = conn.apply_changeset_with(
+///     &cs_from_peer_a,
+///     ApplyFlags::empty(),
+///     |_| true,
+///     |info| match info.conflict_type() {
+///         ConflictType::Data => ConflictAction::Replace,
+///         _ => ConflictAction::Abort,
+///     },
+/// ).unwrap();
+///
+/// if !outcome.rebase.is_empty() {
+///     // Node A: use the rebase blob to rewrite its own outbound changeset
+///     // so it no longer conflicts with what B already applied.
+///     let mut r = Rebaser::new().unwrap();
+///     r.configure(&outcome.rebase).unwrap();
+///     let rebased = r.rebase(&outbound_from_peer_b).unwrap();
+///     outbound_from_peer_b = rebased;
+/// }
+/// # let _ = outbound_from_peer_b;
+/// ```
 ///
 /// ```compile_fail
 /// fn assert_send<T: Send>() {}

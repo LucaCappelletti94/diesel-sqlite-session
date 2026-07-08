@@ -47,6 +47,8 @@ use crate::ffi::{
 ///
 /// # Example
 ///
+/// Attach a table, generate output, inspect state, and pause tracking.
+///
 /// ```
 /// use diesel::prelude::*;
 /// use diesel_sqlite_session::SqliteSessionExt;
@@ -54,25 +56,86 @@ use crate::ffi::{
 /// diesel::table! {
 ///     users (id) {
 ///         id -> Integer,
-///         name -> Text,
+///         name -> Nullable<Text>,
 ///     }
 /// }
 ///
 /// let mut conn = SqliteConnection::establish(":memory:").unwrap();
-///
 /// diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
 ///     .execute(&mut conn)
 ///     .unwrap();
 ///
 /// let mut session = conn.create_session().unwrap();
+///
+/// // Type-safe table attachment (recommended)
 /// session.attach::<users::table>().unwrap();
 ///
-/// diesel::sql_query("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+/// // Or attach all tables
+/// // session.attach_all().unwrap();
+///
+/// // Or dynamic table name (for runtime schemas)
+/// // session.attach_by_name("dynamic_table").unwrap();
+///
+/// // Make some changes
+/// diesel::insert_into(users::table)
+///     .values((users::id.eq(1), users::name.eq(Some("Alice"))))
 ///     .execute(&mut conn)
 ///     .unwrap();
 ///
-/// let patchset = session.patchset().unwrap();
-/// assert!(!patchset.is_empty());
+/// // Generate output
+/// let patchset = session.patchset().unwrap();   // Smaller, new values only
+/// let changeset = session.changeset().unwrap(); // Larger, includes old values
+///
+/// // Check state
+/// let has_changes = !session.is_empty();
+///
+/// // Temporarily disable tracking
+/// session.set_enabled(false);
+/// ```
+///
+/// # Controls
+///
+/// `Session` also exposes `diff`, `set_table_filter`, `set_indirect`, size
+/// and rowid tracking, and `memory_used` for more advanced workflows. Every
+/// setter has a companion reader.
+///
+/// ```
+/// use diesel::prelude::*;
+/// use diesel_sqlite_session::{set_stream_size, stream_size, SqliteSessionExt};
+///
+/// let mut conn = SqliteConnection::establish(":memory:").unwrap();
+/// diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+///     .execute(&mut conn).unwrap();
+/// // The `diff` demo needs a second, non-empty database to diff against.
+/// // Attach an in-memory DB as `aux` and mirror the schema plus a distinct row.
+/// diesel::sql_query("ATTACH DATABASE ':memory:' AS aux")
+///     .execute(&mut conn).unwrap();
+/// diesel::sql_query("CREATE TABLE aux.items (id INTEGER PRIMARY KEY, v INTEGER)")
+///     .execute(&mut conn).unwrap();
+/// diesel::sql_query("INSERT INTO aux.items (id, v) VALUES (2, 200)")
+///     .execute(&mut conn).unwrap();
+///
+/// let mut session = conn.create_session().unwrap();
+/// session.set_size_tracking(true).unwrap();
+/// session.set_rowid_tracking(true).unwrap();
+/// session.set_indirect(true);
+/// session.set_table_filter(|table| table != "audit_log");
+/// session.attach_all().unwrap();
+///
+/// diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 100)")
+///     .execute(&mut conn).unwrap();
+///
+/// let est = session.changeset_size();
+/// let mem = session.memory_used();
+/// println!("estimated {est} bytes / holding {mem} bytes in memory");
+///
+/// // Populate the session with the delta between `aux.items` and `main.items`.
+/// session.diff("aux", "items").unwrap();
+///
+/// // Global default streaming chunk size (see the streamed changeset APIs).
+/// let default_chunk = stream_size().unwrap();
+/// set_stream_size(64 * 1024).unwrap();
+/// # set_stream_size(default_chunk).unwrap();
 /// ```
 #[allow(clippy::struct_field_names)]
 pub struct Session {

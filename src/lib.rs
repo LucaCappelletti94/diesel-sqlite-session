@@ -94,6 +94,52 @@ pub trait SqliteSessionExt {
     /// `on_conflict` receives the conflict type and returns the action to
     /// take.
     ///
+    /// # Example
+    ///
+    /// ```
+    /// use diesel::prelude::*;
+    /// use diesel_sqlite_session::{SqliteSessionExt, ConflictAction, ConflictType};
+    ///
+    /// diesel::table! {
+    ///     t (id) {
+    ///         id -> Integer,
+    ///         v -> Integer,
+    ///     }
+    /// }
+    ///
+    /// // Create source and generate patchset
+    /// let mut source = SqliteConnection::establish(":memory:").unwrap();
+    /// diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER NOT NULL)")
+    ///     .execute(&mut source)
+    ///     .unwrap();
+    /// let mut session = source.create_session().unwrap();
+    /// session.attach::<t::table>().unwrap();
+    /// diesel::insert_into(t::table)
+    ///     .values((t::id.eq(1), t::v.eq(100)))
+    ///     .execute(&mut source)
+    ///     .unwrap();
+    /// let patchset = session.patchset().unwrap();
+    ///
+    /// // Apply with conflict handling
+    /// let mut replica = SqliteConnection::establish(":memory:").unwrap();
+    /// diesel::sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER NOT NULL)")
+    ///     .execute(&mut replica)
+    ///     .unwrap();
+    /// diesel::insert_into(t::table)
+    ///     .values((t::id.eq(1), t::v.eq(999)))
+    ///     .execute(&mut replica)
+    ///     .unwrap();
+    ///
+    /// replica.apply_patchset(&patchset, |conflict_type| {
+    ///     match conflict_type {
+    ///         ConflictType::Data => ConflictAction::Replace,    // Overwrite
+    ///         ConflictType::NotFound => ConflictAction::Omit,   // Skip
+    ///         ConflictType::Conflict => ConflictAction::Replace,
+    ///         _ => ConflictAction::Abort,
+    ///     }
+    /// }).unwrap();
+    /// ```
+    ///
     /// # Errors
     ///
     /// Same set as [`apply_changeset`](Self::apply_changeset).
@@ -105,6 +151,24 @@ pub trait SqliteSessionExt {
     /// `UPDATE`, or `DELETE` on a rowid table. The returned [`PreUpdateHook`]
     /// owns the registration; drop it to detach the callback.
     ///
+    /// The hook fires only when `SQLite` is compiled with
+    /// `SQLITE_ENABLE_PREUPDATE_HOOK`, which is the same flag the session
+    /// extension needs. Mainline Diesel does not expose this hook, so this
+    /// crate is the natural home for it.
+    ///
+    /// The callback receives a [`PreUpdateEvent<'_>`](PreUpdateEvent) bound
+    /// to the callback frame. Values returned by `old_value(col)` /
+    /// `new_value(col)` borrow from `SQLite`'s per-value buffers, so copy
+    /// anything you need into owned types (`String`, `Vec<u8>`, `i64`)
+    /// before the closure returns. `blob_write_column()` returns `Some(i)`
+    /// when the event was raised by `sqlite3_blob_write`, `None` for regular
+    /// DML. `depth()` is `0` at the top level and `>0` inside a trigger.
+    /// Panics inside the closure are caught by the trampoline.
+    ///
+    /// [`PreUpdateHook`] is an RAII guard. `SQLite` allows one hook per
+    /// connection, so a second `on_preupdate` while a guard is alive
+    /// replaces the callback and silently retires the older guard.
+    ///
     /// # Example
     ///
     /// ```
@@ -112,13 +176,31 @@ pub trait SqliteSessionExt {
     /// use diesel_sqlite_session::{PreUpdateOp, SqliteSessionExt};
     ///
     /// let mut conn = SqliteConnection::establish(":memory:").unwrap();
-    /// let hook = conn.on_preupdate(|event| {
-    ///     if matches!(event.op(), PreUpdateOp::Update) {
-    ///         println!("about to update rowid {}", event.old_rowid());
+    /// diesel::sql_query("CREATE TABLE audit (id INTEGER PRIMARY KEY, note TEXT)")
+    ///     .execute(&mut conn)
+    ///     .unwrap();
+    ///
+    /// let hook = conn.on_preupdate(|event| match event.op() {
+    ///     PreUpdateOp::Insert => {
+    ///         let note = event.new_value(1).ok().and_then(|v| v.as_text().map(str::to_owned));
+    ///         println!("inserted rowid {} note {:?}", event.new_rowid(), note);
+    ///     }
+    ///     PreUpdateOp::Update => {
+    ///         let before = event.old_value(1).ok().and_then(|v| v.as_text().map(str::to_owned));
+    ///         let after = event.new_value(1).ok().and_then(|v| v.as_text().map(str::to_owned));
+    ///         println!("update rowid {} {:?} -> {:?}", event.old_rowid(), before, after);
+    ///     }
+    ///     PreUpdateOp::Delete => {
+    ///         println!("delete rowid {}", event.old_rowid());
     ///     }
     /// });
-    /// // ... work ...
-    /// drop(hook); // detach the callback
+    ///
+    /// diesel::sql_query("INSERT INTO audit (note) VALUES ('hello')")
+    ///     .execute(&mut conn)
+    ///     .unwrap();
+    ///
+    /// // Drop the guard to detach the callback.
+    /// drop(hook);
     /// ```
     fn on_preupdate<F>(&mut self, hook: F) -> PreUpdateHook
     where
@@ -148,6 +230,45 @@ pub trait SqliteSessionExt {
     /// conflicts are resolved via [`ConflictAction::Replace`] /
     /// [`ConflictAction::Omit`], carried in the returned [`ApplyOutcome`].
     /// The conflict callback receives a [`ConflictInfo`] view of the row.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use diesel::prelude::*;
+    /// use diesel_sqlite_session::{ApplyFlags, ConflictAction, ConflictType, SqliteSessionExt};
+    ///
+    /// # let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    /// # diesel::sql_query("CREATE TABLE keep (id INTEGER PRIMARY KEY, v INTEGER)")
+    /// #     .execute(&mut conn).unwrap();
+    /// # diesel::sql_query("CREATE TABLE audit (id INTEGER PRIMARY KEY, v INTEGER)")
+    /// #     .execute(&mut conn).unwrap();
+    /// # let changeset: Vec<u8> = vec![];
+    /// let outcome = conn.apply_changeset_with(
+    ///     &changeset,
+    ///     ApplyFlags::INVERT | ApplyFlags::IGNORENOOP,
+    ///     |table| table != "audit",
+    ///     |info| match info.conflict_type() {
+    ///         ConflictType::Data => ConflictAction::Replace,
+    ///         _ => ConflictAction::Abort,
+    ///     },
+    /// )?;
+    /// // `outcome.rebase` carries the SQLite-emitted rebase blob when the
+    /// // conflict callback resolved anything via Replace or Omit. Empty
+    /// // otherwise.
+    /// # Ok::<_, diesel_sqlite_session::ApplyError>(())
+    /// ```
+    ///
+    /// The conflict callback receives a [`ConflictInfo`]: `old_value(i)`
+    /// (pre-image), `new_value(i)` (post-image), `conflict_value(i)`
+    /// (on-disk clashing value), plus `fk_conflicts_count()` for
+    /// [`ConflictType::ForeignKey`] conflicts. All accessors are bound to
+    /// the callback frame.
+    ///
+    /// Flags: `NOSAVEPOINT` (skip the wrapping `SAVEPOINT`), `INVERT` (apply
+    /// the inverse), `IGNORENOOP` (suppress the conflict callback for
+    /// `UPDATE` rows whose replica value already matches the post-image),
+    /// `FKNOACTION` (skip `NO ACTION` FK handling on cascades). Compose
+    /// with `|`.
     ///
     /// # Errors
     ///
@@ -194,6 +315,28 @@ pub trait SqliteSessionExt {
     ///
     /// Same set as [`apply_changeset_with`](Self::apply_changeset_with),
     /// under the v3 filter shape.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use diesel::prelude::*;
+    /// use diesel_sqlite_session::{
+    ///     ApplyFlags, ChangesetOp, ConflictAction, SqliteSessionExt,
+    /// };
+    ///
+    /// # let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    /// # let changeset: Vec<u8> = vec![];
+    /// let outcome = conn.apply_changeset_v3_with(
+    ///     &changeset,
+    ///     ApplyFlags::empty(),
+    ///     |row| {
+    ///         // Skip deletes on the audit table, admit everything else.
+    ///         !(row.table() == "audit" && row.op() == ChangesetOp::Delete)
+    ///     },
+    ///     |_info| ConflictAction::Replace,
+    /// )?;
+    /// # Ok::<_, diesel_sqlite_session::ApplyError>(())
+    /// ```
     fn apply_changeset_v3_with<Filter, Conflict>(
         &mut self,
         changeset: &[u8],
