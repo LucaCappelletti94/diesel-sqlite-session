@@ -94,7 +94,7 @@ pub enum BlobError {
 
 /// A live incremental-blob handle.
 ///
-/// See the [module docs](self) for the safety contract.
+/// See the module-level docs for the safety contract.
 ///
 /// ```compile_fail
 /// fn assert_send<T: Send>() {}
