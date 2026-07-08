@@ -12,7 +12,7 @@ use crate::ffi::{
     SQLITE_TOOBIG,
 };
 
-/// Conflict handler callback context.
+/// Conflict-handler bundle passed as `pCtx` to `sqlite3changeset_apply`.
 struct ConflictContext<F> {
     handler: F,
     aborted: bool,
@@ -23,7 +23,7 @@ struct ConflictContext<F> {
 ///
 /// # Safety
 ///
-/// This function is called by `SQLite` with valid pointers.
+/// `SQLite` invokes this with a `pCtx` we handed it.
 unsafe extern "C" fn conflict_callback<F>(
     context: *mut std::ffi::c_void,
     conflict_type: c_int,
@@ -32,8 +32,7 @@ unsafe extern "C" fn conflict_callback<F>(
 where
     F: Fn(ConflictType) -> ConflictAction,
 {
-    // SAFETY: SQLite invokes this callback with the same context pointer we
-    // provided to `sqlite3changeset_apply`.
+    // SAFETY: `context` is the pointer we handed to `sqlite3changeset_apply`.
     let ctx = unsafe { &mut *context.cast::<ConflictContext<F>>() };
 
     let action = ConflictType::from_raw(conflict_type).map_or(ConflictAction::Abort, |conflict| {
@@ -52,12 +51,8 @@ where
     action.to_raw()
 }
 
-/// Apply a changeset to a Diesel connection.
-///
-/// A changeset contains complete information about changes, including old
-/// values for conflict detection.
-///
-/// This is an internal function. Use `SqliteSessionExt::apply_changeset` instead.
+/// Apply a changeset to a Diesel connection. Internal helper: use
+/// `SqliteSessionExt::apply_changeset` instead.
 #[inline]
 pub(crate) fn apply_changeset<F>(
     conn: &mut SqliteConnection,
@@ -70,12 +65,9 @@ where
     apply_impl(conn, changeset, on_conflict)
 }
 
-/// Apply a patchset to a Diesel connection.
-///
-/// A patchset contains only new values (not old values), making it smaller
-/// but with less precise conflict detection.
-///
-/// This is an internal function. Use `SqliteSessionExt::apply_patchset` instead.
+/// Apply a patchset to a Diesel connection. Patchsets carry only new values
+/// so they are smaller than changesets but detect conflicts less precisely.
+/// Internal helper: use `SqliteSessionExt::apply_patchset` instead.
 #[inline]
 pub(crate) fn apply_patchset<F>(
     conn: &mut SqliteConnection,
@@ -88,7 +80,7 @@ where
     apply_impl(conn, patchset, on_conflict)
 }
 
-/// Internal implementation for applying both changesets and patchsets.
+/// Shared body for `apply_changeset` and `apply_patchset`.
 #[inline]
 fn apply_impl<F>(conn: &mut SqliteConnection, data: &[u8], on_conflict: F) -> Result<(), ApplyError>
 where
@@ -106,9 +98,8 @@ where
     let data_len = c_int::try_from(data.len())
         .map_err(|_| ApplyError::ApplyFailed(SqliteErrorCode::from_error(SQLITE_TOOBIG)))?;
 
-    // SAFETY: `with_raw_connection` provides a valid SQLite connection pointer for
-    // the callback duration, `data` lives through the FFI call, and `context`
-    // points to stack storage that also outlives the call.
+    // SAFETY: `with_raw_connection` yields a live `sqlite3*`; `data` and
+    // `context` outlive the FFI call from this stack frame.
     let rc = unsafe {
         conn.with_raw_connection(|raw| {
             sqlite3changeset_apply(

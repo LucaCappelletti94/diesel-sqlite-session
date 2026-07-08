@@ -1,0 +1,371 @@
+//! Integration tests for the `_strm` streamed variants.
+//!
+//! One test per invariant. Every streaming entry point is exercised, plus
+//! the `io::Error` and panic propagation shared across them.
+
+use std::io::{self, Cursor, ErrorKind, Read, Write};
+
+use diesel::prelude::*;
+use diesel::sql_query;
+use diesel_sqlite_session::{
+    concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm, ApplyError,
+    ApplyFlags, Changegroup, ChangesetError, ChangesetOp, ChangesetReader, ConflictAction, Rebaser,
+    SessionError, SqliteSessionExt,
+};
+
+fn fresh_connection() -> SqliteConnection {
+    SqliteConnection::establish(":memory:").expect("open in-memory database")
+}
+
+fn create_items(conn: &mut SqliteConnection) {
+    sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(conn)
+        .unwrap();
+}
+
+fn count_items(conn: &mut SqliteConnection) -> i64 {
+    diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM items")
+        .get_result(conn)
+        .unwrap()
+}
+
+/// Build an INSERT-only changeset for `rows` in a fresh `items` table.
+fn make_changeset(rows: &[(i64, i64)]) -> Vec<u8> {
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    for (id, v) in rows {
+        sql_query(format!("INSERT INTO items (id, v) VALUES ({id}, {v})"))
+            .execute(&mut conn)
+            .unwrap();
+    }
+    session.changeset().unwrap()
+}
+
+#[test]
+fn session_changeset_strm_writes_the_same_bytes_as_the_buffered_variant() {
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut conn)
+        .unwrap();
+
+    // Buffered reference bytes first.
+    let reference = session.changeset().unwrap();
+
+    // Stream into a Vec<u8> through a Cursor writer.
+    let mut streamed = Vec::new();
+    session
+        .changeset_strm(&mut streamed)
+        .expect("changeset_strm");
+
+    assert_eq!(reference, streamed, "streamed bytes match buffered bytes");
+}
+
+#[test]
+fn session_patchset_strm_writes_a_nonempty_buffer() {
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 42)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let mut streamed = Vec::new();
+    session.patchset_strm(&mut streamed).unwrap();
+    assert!(!streamed.is_empty());
+}
+
+#[test]
+fn session_changeset_strm_surfaces_writer_io_errors() {
+    struct FailWrite;
+    impl Write for FailWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(ErrorKind::BrokenPipe, "test-writer-failed"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let err = session.changeset_strm(FailWrite).unwrap_err();
+    match err {
+        SessionError::WriterIo(inner) => {
+            assert_eq!(inner.kind(), ErrorKind::BrokenPipe);
+        }
+        other => panic!("expected WriterIo, got {other:?}"),
+    }
+}
+
+#[test]
+fn session_changeset_strm_surfaces_writer_panics() {
+    struct PanicWrite;
+    impl Write for PanicWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            panic!("panic-inside-writer");
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut conn = fresh_connection();
+    create_items(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let err = session.changeset_strm(PanicWrite).unwrap_err();
+    assert!(matches!(err, SessionError::WriterPanicked), "{err:?}");
+}
+
+#[test]
+fn changeset_reader_open_strm_iterates_a_streamed_changeset() {
+    let bytes = make_changeset(&[(1, 10), (2, 20), (3, 30)]);
+    let cursor = Cursor::new(bytes.clone());
+    let mut reader = ChangesetReader::open_strm(cursor).expect("open_strm succeeds");
+    let mut ids: Vec<i64> = Vec::new();
+    while let Some(row) = reader.next().unwrap() {
+        assert_eq!(row.op(), ChangesetOp::Insert);
+        ids.push(row.new_value(0).unwrap().unwrap().as_i64());
+    }
+    assert_eq!(ids, vec![1, 2, 3]);
+}
+
+#[test]
+fn changeset_reader_open_inverted_strm_flips_ops() {
+    let bytes = make_changeset(&[(1, 10)]);
+    let cursor = Cursor::new(bytes);
+    let mut reader = ChangesetReader::open_inverted_strm(cursor).expect("open_inverted_strm");
+    let row = reader.next().unwrap().expect("saw a row");
+    assert_eq!(row.op(), ChangesetOp::Delete);
+}
+#[test]
+fn changeset_reader_open_strm_defers_reader_io_errors_to_next() {
+    // `sqlite3changeset_start_strm` may accept the trampoline without ever
+    // calling it. The reader error surfaces on the first `next()` call
+    // instead, so open_strm succeeds and next() fails.
+    struct FailRead;
+    impl Read for FailRead {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(ErrorKind::UnexpectedEof, "reader-failed"))
+        }
+    }
+    let maybe_reader = ChangesetReader::open_strm(FailRead);
+    match maybe_reader {
+        Err(ChangesetError::ReaderIo(err)) => {
+            assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+        }
+        Ok(mut reader) => match reader.next() {
+            Err(ChangesetError::ReaderIo(err)) => {
+                assert_eq!(err.kind(), ErrorKind::UnexpectedEof);
+            }
+            Err(ChangesetError::NextFailed(_)) => {
+                // Some SQLite paths report generic NextFailed when the
+                // trampoline set SQLITE_IOERR. Accept as a valid outcome.
+            }
+            other => panic!("expected ReaderIo or NextFailed, got {other:?}"),
+        },
+        other => panic!("expected ReaderIo or Ok, got {other:?}"),
+    }
+}
+
+#[test]
+fn apply_changeset_strm_with_applies_the_streamed_bytes() {
+    let bytes = make_changeset(&[(1, 10), (2, 20)]);
+    let mut replica = fresh_connection();
+    create_items(&mut replica);
+
+    let outcome = replica
+        .apply_changeset_strm_with(
+            Cursor::new(bytes),
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .expect("apply_changeset_strm_with succeeds");
+    assert!(outcome.rebase.is_empty());
+    assert_eq!(count_items(&mut replica), 2);
+}
+
+#[test]
+fn apply_changeset_strm_with_surfaces_reader_io_errors() {
+    struct FailRead;
+    impl Read for FailRead {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("reader-failed"))
+        }
+    }
+    let mut replica = fresh_connection();
+    create_items(&mut replica);
+    let err = replica
+        .apply_changeset_strm_with(
+            FailRead,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap_err();
+    match err {
+        ApplyError::ReaderIo(_) => {}
+        other => panic!("expected ReaderIo, got {other:?}"),
+    }
+}
+
+#[test]
+fn invert_changeset_strm_matches_the_buffered_invert() {
+    let bytes = make_changeset(&[(1, 10)]);
+    let reference = invert_changeset(&bytes).unwrap();
+
+    let mut streamed = Vec::new();
+    invert_changeset_strm(Cursor::new(bytes), &mut streamed)
+        .expect("invert_changeset_strm succeeds");
+
+    assert_eq!(reference, streamed);
+}
+
+#[test]
+fn concat_changesets_strm_matches_the_buffered_concat() {
+    let a = make_changeset(&[(1, 10)]);
+    let b = make_changeset(&[(2, 20)]);
+    let reference = concat_changesets(&a, &b).unwrap();
+
+    let mut streamed = Vec::new();
+    concat_changesets_strm(Cursor::new(a), Cursor::new(b), &mut streamed)
+        .expect("concat_changesets_strm succeeds");
+
+    assert_eq!(reference, streamed);
+}
+
+#[test]
+fn changegroup_add_strm_and_output_strm_round_trip() {
+    let a = make_changeset(&[(1, 10)]);
+    let b = make_changeset(&[(2, 20)]);
+
+    let mut group = Changegroup::new().unwrap();
+    group.add_strm(Cursor::new(a)).expect("add_strm(a)");
+    group.add_strm(Cursor::new(b)).expect("add_strm(b)");
+
+    let mut streamed = Vec::new();
+    group.output_strm(&mut streamed).expect("output_strm");
+
+    // Apply the streamed merged changeset to a fresh replica.
+    let mut replica = fresh_connection();
+    create_items(&mut replica);
+    replica
+        .apply_changeset(&streamed, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_items(&mut replica), 2);
+}
+
+#[test]
+fn rebaser_rebase_strm_round_trips_through_the_iterator() {
+    // Build a rebase blob from a Replace conflict.
+    let mut peer_a = fresh_connection();
+    create_items(&mut peer_a);
+    let mut peer_b = fresh_connection();
+    create_items(&mut peer_b);
+
+    let mut session_a = peer_a.create_session().unwrap();
+    session_a.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut peer_a)
+        .unwrap();
+    let cs_a = session_a.changeset().unwrap();
+    drop(session_a);
+
+    let mut session_b = peer_b.create_session().unwrap();
+    session_b.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 99)")
+        .execute(&mut peer_b)
+        .unwrap();
+    let cs_b = session_b.changeset().unwrap();
+    drop(session_b);
+
+    let outcome = peer_b
+        .apply_changeset_with(
+            &cs_a,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Replace,
+        )
+        .unwrap();
+    let rebase_bytes = outcome.rebase;
+
+    // Streamed rebase.
+    let mut rebaser = Rebaser::new().unwrap();
+    rebaser.configure(&rebase_bytes).unwrap();
+    let mut rewritten = Vec::new();
+    rebaser
+        .rebase_strm(Cursor::new(cs_b), &mut rewritten)
+        .expect("rebase_strm succeeds");
+
+    // The rewritten output is a well-formed changeset (possibly empty when
+    // the rebase determined no work is needed on this peer). Apply it and
+    // assert it's a no-op or a coherent update.
+    if !rewritten.is_empty() {
+        let mut reader = ChangesetReader::open(&rewritten).expect("open reader");
+        let _first = reader.next().unwrap();
+    }
+    // Apply the rewritten bytes onto peer A: no conflict must arise.
+    if !rewritten.is_empty() {
+        peer_a
+            .apply_changeset_with(
+                &rewritten,
+                ApplyFlags::empty(),
+                |_| true,
+                |_| ConflictAction::Abort,
+            )
+            .expect("apply rewritten bytes on peer A");
+    }
+}
+
+#[test]
+fn changegroup_add_strm_surfaces_reader_panic() {
+    struct PanicRead;
+    impl Read for PanicRead {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            panic!("panic-inside-reader");
+        }
+    }
+    let mut group = Changegroup::new().unwrap();
+    let err = group.add_strm(PanicRead).unwrap_err();
+    assert!(matches!(err, ChangesetError::ReaderPanicked), "{err:?}");
+}
+
+#[test]
+fn changegroup_output_strm_surfaces_writer_io_error() {
+    struct FailWrite;
+    impl Write for FailWrite {
+        fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+            Err(io::Error::new(ErrorKind::PermissionDenied, "no writes"))
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut group = Changegroup::new().unwrap();
+    group.add(&make_changeset(&[(1, 10)])).unwrap();
+    let err = group.output_strm(FailWrite).unwrap_err();
+    match err {
+        ChangesetError::WriterIo(inner) => {
+            assert_eq!(inner.kind(), ErrorKind::PermissionDenied);
+        }
+        other => panic!("expected WriterIo, got {other:?}"),
+    }
+}

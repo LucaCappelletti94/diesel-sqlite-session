@@ -6,7 +6,14 @@
 
 use diesel::prelude::*;
 use diesel::sql_query;
-use diesel_sqlite_session::{ConflictAction, SqliteSessionExt};
+use diesel_sqlite_session::{
+    concat_changesets, invert_changeset, ApplyFlags, BlobError, BlobMode, Changegroup, ChangesetOp,
+    ChangesetReader, ChangesetRow, ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp,
+    Rebaser, SqliteSessionExt,
+};
+use parking_lot::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -326,5 +333,766 @@ async fn test_enable_disable_wasm() {
         .unwrap();
 
     // Should have 2 rows (1 and 3, not 2)
+    assert_eq!(count_rows(&mut replica), 2);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_insert_fires_hook_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let events: Arc<Mutex<Vec<(PreUpdateOp, String, String, i64, usize)>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let sink = events.clone();
+    let hook = conn.on_preupdate(move |event| {
+        sink.lock().push((
+            event.op(),
+            event.database().to_owned(),
+            event.table().to_owned(),
+            event.new_rowid(),
+            event.column_count(),
+        ));
+    });
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 42)")
+        .execute(&mut conn)
+        .unwrap();
+    drop(hook);
+
+    let observed = events.lock().clone();
+    assert_eq!(observed.len(), 1);
+    let (op, database, table, new_rowid, column_count) = observed[0].clone();
+    assert_eq!(op, PreUpdateOp::Insert);
+    assert_eq!(database, "main");
+    assert_eq!(table, "test_items");
+    assert_eq!(new_rowid, 1);
+    assert_eq!(column_count, 3);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_update_delivers_old_and_new_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'before', 1)")
+        .execute(&mut conn)
+        .unwrap();
+
+    #[derive(Clone)]
+    struct Snapshot {
+        old_name: Option<String>,
+        new_name: Option<String>,
+        old_value: i64,
+        new_value: i64,
+    }
+    let snap: Arc<Mutex<Option<Snapshot>>> = Arc::new(Mutex::new(None));
+    let sink = snap.clone();
+    let hook = conn.on_preupdate(move |event| {
+        if matches!(event.op(), PreUpdateOp::Update) {
+            let old_name = event
+                .old_value(1)
+                .ok()
+                .and_then(|v| v.as_text().map(str::to_owned));
+            let new_name = event
+                .new_value(1)
+                .ok()
+                .and_then(|v| v.as_text().map(str::to_owned));
+            let old_value = event.old_value(2).map(|v| v.as_i64()).unwrap_or(-1);
+            let new_value = event.new_value(2).map(|v| v.as_i64()).unwrap_or(-1);
+            *sink.lock() = Some(Snapshot {
+                old_name,
+                new_name,
+                old_value,
+                new_value,
+            });
+        }
+    });
+    sql_query("UPDATE test_items SET name = 'after', value = 2 WHERE id = 1")
+        .execute(&mut conn)
+        .unwrap();
+    drop(hook);
+
+    let s = snap.lock().clone().expect("saw an Update event");
+    assert_eq!(s.old_name.as_deref(), Some("before"));
+    assert_eq!(s.new_name.as_deref(), Some("after"));
+    assert_eq!(s.old_value, 1);
+    assert_eq!(s.new_value, 2);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_column_type_matches_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE mixed_wasm (a, b, c, d, e)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let types: Arc<Mutex<Vec<PreUpdateColumnType>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = types.clone();
+    let hook = conn.on_preupdate(move |event| {
+        if matches!(event.op(), PreUpdateOp::Insert) {
+            let mut buf = sink.lock();
+            for i in 0..u32::try_from(event.column_count()).unwrap() {
+                buf.push(event.new_value(i).unwrap().column_type());
+            }
+        }
+    });
+    sql_query("INSERT INTO mixed_wasm (a, b, c, d, e) VALUES (7, 'hi', 3.5, x'DEADBEEF', NULL)")
+        .execute(&mut conn)
+        .unwrap();
+    drop(hook);
+
+    let observed = types.lock().clone();
+    assert_eq!(
+        observed,
+        vec![
+            PreUpdateColumnType::Integer,
+            PreUpdateColumnType::Text,
+            PreUpdateColumnType::Float,
+            PreUpdateColumnType::Blob,
+            PreUpdateColumnType::Null,
+        ],
+    );
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_dropping_guard_stops_callback_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let count = Arc::new(AtomicU32::new(0));
+    let sink = count.clone();
+    let hook = conn.on_preupdate(move |_| {
+        sink.fetch_add(1, Ordering::SeqCst);
+    });
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'a', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    drop(hook);
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'b', 2)")
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+}
+
+#[wasm_bindgen_test]
+async fn preupdate_then_session_cutover_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let count = Arc::new(AtomicU32::new(0));
+    let sink = count.clone();
+    let hook = conn.on_preupdate(move |_| {
+        sink.fetch_add(1, Ordering::SeqCst);
+    });
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'x', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    drop(hook);
+
+    let mut session = conn.create_session().unwrap();
+    session.attach::<test_items::table>().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'y', 2)")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+    assert!(!changeset.is_empty());
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset(&changeset, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 1);
+}
+
+#[wasm_bindgen_test]
+async fn blob_read_write_round_trip_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE photos_wasm (id INTEGER PRIMARY KEY, data BLOB)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO photos_wasm (id, data) VALUES (1, zeroblob(8))")
+        .execute(&mut conn)
+        .unwrap();
+
+    let blob = conn
+        .open_blob("main", "photos_wasm", "data", 1, BlobMode::ReadWrite)
+        .expect("open handle");
+    assert_eq!(blob.len(), 8);
+    blob.write_at(2, b"WASM").expect("write succeeds");
+    let mut echo = [0u8; 4];
+    blob.read_at(2, &mut echo).expect("read succeeds");
+    assert_eq!(&echo, b"WASM");
+    blob.close().expect("close succeeds");
+}
+
+#[wasm_bindgen_test]
+async fn blob_write_read_only_returns_read_only_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE ro_wasm (id INTEGER PRIMARY KEY, data BLOB)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO ro_wasm (id, data) VALUES (1, zeroblob(4))")
+        .execute(&mut conn)
+        .unwrap();
+
+    let blob = conn
+        .open_blob("main", "ro_wasm", "data", 1, BlobMode::ReadOnly)
+        .expect("open handle");
+    let err = blob.write_at(0, b"x").unwrap_err();
+    assert!(matches!(err, BlobError::ReadOnly));
+}
+
+#[wasm_bindgen_test]
+async fn blob_write_fires_preupdate_with_column_index_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE bw_wasm (id INTEGER PRIMARY KEY, name TEXT, data BLOB)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO bw_wasm (id, name, data) VALUES (1, 'row', zeroblob(4))")
+        .execute(&mut conn)
+        .unwrap();
+
+    let seen: Arc<Mutex<Vec<(PreUpdateOp, Option<u32>)>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let hook = conn.on_preupdate(move |event| {
+        sink.lock().push((event.op(), event.blob_write_column()));
+    });
+
+    let blob = conn
+        .open_blob("main", "bw_wasm", "data", 1, BlobMode::ReadWrite)
+        .expect("open handle");
+    blob.write_at(0, b"abcd").expect("write succeeds");
+    blob.close().expect("close reports success");
+    drop(hook);
+
+    let observed = seen.lock().clone();
+    let blob_hit = observed
+        .iter()
+        .find(|(_, col)| col.is_some())
+        .expect("saw a blob-write event");
+    assert_eq!(blob_hit.0, PreUpdateOp::Delete);
+    assert_eq!(blob_hit.1, Some(2));
+}
+
+#[wasm_bindgen_test]
+async fn changeset_reader_iterates_an_insert_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'wasm', 7)")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&changeset).expect("open reader");
+    let row = reader.next().expect("advance").expect("saw an insert row");
+    assert_eq!(row.op(), ChangesetOp::Insert);
+    assert_eq!(row.table(), "test_items");
+    assert_eq!(row.column_count(), 3);
+    assert_eq!(row.new_value(0).unwrap().unwrap().as_i64(), 1);
+    assert_eq!(row.new_value(1).unwrap().unwrap().as_text(), Some("wasm"));
+    assert_eq!(row.new_value(2).unwrap().unwrap().as_i64(), 7);
+    assert!(reader.next().unwrap().is_none());
+}
+
+#[wasm_bindgen_test]
+async fn changeset_reader_open_inverted_swaps_insert_and_delete_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+
+    let mut inverted = ChangesetReader::open_inverted(&changeset).expect("open inverted reader");
+    let row = inverted
+        .next()
+        .expect("advance")
+        .expect("saw an inverted row");
+    assert_eq!(row.op(), ChangesetOp::Delete);
+    let id = row.old_value(0).unwrap().expect("id");
+    assert_eq!(id.as_i64(), 1);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_with_filter_skips_tables_wasm() {
+    let mut source = create_connection();
+    sql_query("CREATE TABLE keep_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("CREATE TABLE skip_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut source)
+        .unwrap();
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO keep_wasm (id, v) VALUES (1, 1)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO skip_wasm (id, v) VALUES (7, 7)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    sql_query("CREATE TABLE keep_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut replica)
+        .unwrap();
+    sql_query("CREATE TABLE skip_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut replica)
+        .unwrap();
+
+    let outcome = replica
+        .apply_changeset_with(
+            &bytes,
+            ApplyFlags::empty(),
+            |table| table != "skip_wasm",
+            |_| ConflictAction::Abort,
+        )
+        .expect("apply succeeds");
+    assert!(outcome.rebase.is_empty());
+
+    let keep_count: i64 =
+        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM keep_wasm")
+            .get_result(&mut replica)
+            .unwrap();
+    let skip_count: i64 =
+        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM skip_wasm")
+            .get_result(&mut replica)
+            .unwrap();
+    assert_eq!(keep_count, 1);
+    assert_eq!(skip_count, 0);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_with_invert_flag_wasm() {
+    let mut conn = create_connection();
+    sql_query("CREATE TABLE flipped_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut conn)
+        .unwrap();
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO flipped_wasm (id, v) VALUES (1, 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    // Apply inverted to the same connection: the INSERT reads as a DELETE.
+    conn.apply_changeset_with(
+        &bytes,
+        ApplyFlags::INVERT,
+        |_| true,
+        |_| ConflictAction::Abort,
+    )
+    .expect("inverted apply succeeds");
+    let count: i64 =
+        diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM flipped_wasm")
+            .get_result(&mut conn)
+            .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_with_conflict_info_wasm() {
+    let mut source = create_connection();
+    sql_query("CREATE TABLE clash_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO clash_wasm (id, v) VALUES (1, 1)")
+        .execute(&mut source)
+        .unwrap();
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("UPDATE clash_wasm SET v = 100 WHERE id = 1")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    sql_query("CREATE TABLE clash_wasm (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut replica)
+        .unwrap();
+    sql_query("INSERT INTO clash_wasm (id, v) VALUES (1, 42)")
+        .execute(&mut replica)
+        .unwrap();
+
+    let captured: Arc<Mutex<Option<(ConflictType, i64, i64, i64)>>> = Arc::new(Mutex::new(None));
+    let sink = captured.clone();
+    replica
+        .apply_changeset_with(
+            &bytes,
+            ApplyFlags::empty(),
+            |_| true,
+            move |info| {
+                let old = info.old_value(1).unwrap().unwrap().as_i64();
+                let new = info.new_value(1).unwrap().unwrap().as_i64();
+                let on_disk = info.conflict_value(1).unwrap().as_i64();
+                *sink.lock() = Some((info.conflict_type(), old, new, on_disk));
+                ConflictAction::Replace
+            },
+        )
+        .expect("apply with Replace succeeds");
+
+    let observed = captured.lock().take().expect("saw a conflict");
+    assert_eq!(observed.0, ConflictType::Data);
+    assert_eq!(observed.1, 1);
+    assert_eq!(observed.2, 100);
+    assert_eq!(observed.3, 42);
+}
+
+#[wasm_bindgen_test]
+async fn invert_flips_insert_into_delete_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 7)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let inverted = invert_changeset(&bytes).expect("invert succeeds");
+
+    let mut reader = ChangesetReader::open(&inverted).unwrap();
+    let row = reader.next().expect("advance").expect("saw a row");
+    assert_eq!(row.op(), ChangesetOp::Delete);
+}
+
+#[wasm_bindgen_test]
+async fn concat_merges_two_disjoint_changesets_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut s = source.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'a', 1)")
+        .execute(&mut source)
+        .unwrap();
+    let a = s.changeset().unwrap();
+    drop(s);
+
+    let mut source2 = create_connection();
+    setup_table(&mut source2);
+    let mut s = source2.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'b', 2)")
+        .execute(&mut source2)
+        .unwrap();
+    let b = s.changeset().unwrap();
+    drop(s);
+
+    let combined = concat_changesets(&a, &b).expect("concat succeeds");
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset(&combined, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 2);
+}
+
+#[wasm_bindgen_test]
+async fn changegroup_aggregates_and_replays_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut s = source.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'first', 1)")
+        .execute(&mut source)
+        .unwrap();
+    let first = s.changeset().unwrap();
+    drop(s);
+
+    let mut source2 = create_connection();
+    setup_table(&mut source2);
+    let mut s = source2.create_session().unwrap();
+    s.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'second', 2)")
+        .execute(&mut source2)
+        .unwrap();
+    let second = s.changeset().unwrap();
+    drop(s);
+
+    let mut group = Changegroup::new().unwrap();
+    group.add(&first).unwrap();
+    group.add(&second).unwrap();
+    let merged = group.output().unwrap();
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset(&merged, |_| ConflictAction::Abort)
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 2);
+}
+
+#[wasm_bindgen_test]
+async fn session_indirect_round_trip_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    assert!(!session.is_indirect());
+    session.set_indirect(true);
+    assert!(session.is_indirect());
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&bytes).unwrap();
+    let row = reader.next().unwrap().expect("saw a row");
+    assert!(row.indirect(), "indirect flag serialized");
+}
+
+#[wasm_bindgen_test]
+async fn session_table_filter_filters_attach_all_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    sql_query("CREATE TABLE skip_wasm2 (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let mut session = conn.create_session().unwrap();
+    session.set_table_filter(|table| table != "skip_wasm2");
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO skip_wasm2 (id, v) VALUES (7, 7)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&bytes).unwrap();
+    let mut tables: Vec<String> = Vec::new();
+    while let Some(row) = reader.next().unwrap() {
+        tables.push(row.table().to_owned());
+    }
+    assert!(tables.contains(&"test_items".to_string()));
+    assert!(!tables.contains(&"skip_wasm2".to_string()));
+}
+
+#[wasm_bindgen_test]
+async fn session_size_tracking_reports_nonzero_changeset_size_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.set_size_tracking(true).unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 42)")
+        .execute(&mut conn)
+        .unwrap();
+    assert!(session.changeset_size() > 0);
+    assert!(session.memory_used() > 0);
+}
+
+#[wasm_bindgen_test]
+async fn rebaser_multi_master_convergence_wasm() {
+    // Two peers write to the same primary key. Peer B applies A first with
+    // Replace and captures the rebase blob. Rebase B's outbound changeset
+    // against the blob so peer A can apply it without conflicting.
+    let mut peer_a = create_connection();
+    setup_table(&mut peer_a);
+    let mut peer_b = create_connection();
+    setup_table(&mut peer_b);
+
+    let mut session_a = peer_a.create_session().unwrap();
+    session_a.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'A', 10)")
+        .execute(&mut peer_a)
+        .unwrap();
+    let cs_a = session_a.changeset().unwrap();
+    drop(session_a);
+
+    let mut session_b = peer_b.create_session().unwrap();
+    session_b.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'B', 99)")
+        .execute(&mut peer_b)
+        .unwrap();
+    let cs_b = session_b.changeset().unwrap();
+    drop(session_b);
+
+    let outcome = peer_b
+        .apply_changeset_with(
+            &cs_a,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Replace,
+        )
+        .expect("apply_v2 with Replace succeeds");
+    let rebase_bytes = outcome.rebase;
+    assert!(!rebase_bytes.is_empty());
+
+    let mut rebaser = Rebaser::new().expect("rebaser new");
+    rebaser.configure(&rebase_bytes).unwrap();
+    let rewritten_b = rebaser.rebase(&cs_b).expect("rebase cs_b succeeds");
+
+    peer_a
+        .apply_changeset_with(
+            &rewritten_b,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .expect("apply rewritten_b on peer A succeeds");
+
+    let value_on_a: i32 =
+        diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT value FROM test_items WHERE id = 1")
+            .get_result(&mut peer_a)
+            .unwrap();
+    let value_on_b: i32 =
+        diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT value FROM test_items WHERE id = 1")
+            .get_result(&mut peer_b)
+            .unwrap();
+    assert_eq!(value_on_a, value_on_b);
+}
+
+#[wasm_bindgen_test]
+async fn session_changeset_strm_matches_buffered_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 7)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let buffered = session.changeset().unwrap();
+    let mut streamed = Vec::new();
+    session.changeset_strm(&mut streamed).unwrap();
+    assert_eq!(buffered, streamed);
+}
+
+#[wasm_bindgen_test]
+async fn changeset_reader_open_strm_iterates_a_stream_wasm() {
+    let mut conn = create_connection();
+    setup_table(&mut conn);
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut conn)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open_strm(std::io::Cursor::new(bytes)).unwrap();
+    let row = reader.next().unwrap().expect("saw a row");
+    assert_eq!(row.op(), ChangesetOp::Insert);
+    assert_eq!(row.table(), "test_items");
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_strm_with_applies_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 1)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset_strm_with(
+            std::io::Cursor::new(bytes),
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 1);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_v3_with_filters_by_row_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'keep', 11)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'skip', 20)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset_v3_with(
+            &bytes,
+            ApplyFlags::empty(),
+            |row: ChangesetRow<'_>| {
+                if row.op() == ChangesetOp::Insert {
+                    let v = row.new_value(2).unwrap().unwrap().as_i64();
+                    v % 2 == 1
+                } else {
+                    true
+                }
+            },
+            |_| ConflictAction::Abort,
+        )
+        .expect("v3 apply succeeds");
+    assert_eq!(count_rows(&mut replica), 1);
+}
+
+#[wasm_bindgen_test]
+async fn changegroup_add_change_folds_per_row_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'a', 10)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'b', 20)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (3, 'c', 30)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut group = Changegroup::new().unwrap();
+    let mut reader = ChangesetReader::open(&bytes).unwrap();
+    while let Some(row) = reader.next().unwrap() {
+        let id = row.new_value(0).unwrap().unwrap().as_i64();
+        if id != 2 {
+            group.add_change(&row).unwrap();
+        }
+    }
+    let merged = group.output().unwrap();
+    drop(reader);
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset_with(
+            &merged,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap();
     assert_eq!(count_rows(&mut replica), 2);
 }
