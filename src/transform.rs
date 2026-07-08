@@ -8,15 +8,16 @@ use std::ptr;
 
 use diesel::SqliteConnection;
 
-use crate::changeset::ChangesetError;
+use crate::changeset::{ChangesetError, ChangesetRow};
 use crate::errors::SqliteErrorCode;
 use crate::ffi::{
     sqlite3_changegroup, sqlite3_free, sqlite3_rebaser, sqlite3changegroup_add,
-    sqlite3changegroup_add_strm, sqlite3changegroup_delete, sqlite3changegroup_new,
-    sqlite3changegroup_output, sqlite3changegroup_output_strm, sqlite3changegroup_schema,
-    sqlite3changeset_concat, sqlite3changeset_concat_strm, sqlite3changeset_invert,
-    sqlite3changeset_invert_strm, sqlite3rebaser_configure, sqlite3rebaser_create,
-    sqlite3rebaser_delete, sqlite3rebaser_rebase, sqlite3rebaser_rebase_strm, SQLITE_OK,
+    sqlite3changegroup_add_change, sqlite3changegroup_add_strm, sqlite3changegroup_delete,
+    sqlite3changegroup_new, sqlite3changegroup_output, sqlite3changegroup_output_strm,
+    sqlite3changegroup_schema, sqlite3changeset_concat, sqlite3changeset_concat_strm,
+    sqlite3changeset_invert, sqlite3changeset_invert_strm, sqlite3rebaser_configure,
+    sqlite3rebaser_create, sqlite3rebaser_delete, sqlite3rebaser_rebase,
+    sqlite3rebaser_rebase_strm, SQLITE_OK,
 };
 
 /// Produce the inverse of `bytes` (`sqlite3changeset_invert`). Every `INSERT`
@@ -319,6 +320,58 @@ impl Changegroup {
                 changeset.as_ptr().cast::<c_void>().cast_mut(),
             )
         };
+        if rc != SQLITE_OK {
+            return Err(ChangesetError::ChangegroupAddFailed(
+                SqliteErrorCode::from_error(rc),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Fold a single positioned row from a
+    /// [`ChangesetReader`](crate::ChangesetReader) into the group
+    /// (`sqlite3changegroup_add_change`). The per-op counterpart to
+    /// [`add`](Self::add): step through a changeset and hand only the rows
+    /// you want to the group.
+    ///
+    /// ```
+    /// use diesel::prelude::*;
+    /// use diesel_sqlite_session::{Changegroup, ChangesetReader, SqliteSessionExt};
+    ///
+    /// # let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    /// # diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+    /// #     .execute(&mut conn).unwrap();
+    /// # let mut session = conn.create_session().unwrap();
+    /// # session.attach_all().unwrap();
+    /// # diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 10), (2, 20), (3, 30)")
+    /// #     .execute(&mut conn).unwrap();
+    /// # let bytes = session.changeset().unwrap();
+    /// # drop(session);
+    /// // Fold only rows with an odd id into the group.
+    /// let mut group = Changegroup::new()?;
+    /// let mut reader = ChangesetReader::open(&bytes)?;
+    /// while let Some(row) = reader.next()? {
+    ///     let id = row.new_value(0)?.unwrap().as_i64();
+    ///     if id % 2 == 1 {
+    ///         group.add_change(&row)?;
+    ///     }
+    /// }
+    /// let merged = group.output()?;
+    /// # assert!(!merged.is_empty());
+    /// # Ok::<_, diesel_sqlite_session::ChangesetError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`ChangesetError::ChangegroupAddFailed`] on any `SQLite`-reported
+    ///   error. `SQLITE_ERROR` here means the iterator was opened inverted
+    ///   or `sqlite3changegroup_add_change` refused the change (invalid
+    ///   position, or schema mismatch when no `set_schema` was configured).
+    pub fn add_change(&mut self, row: &ChangesetRow<'_>) -> Result<(), ChangesetError> {
+        // SAFETY: `self.ptr` is a live changegroup; `row.as_raw_iter()`
+        // returns the iterator that produced `row` in `ChangesetReader::next`,
+        // which only hands out rows on a valid entry.
+        let rc = unsafe { sqlite3changegroup_add_change(self.ptr, row.as_raw_iter()) };
         if rc != SQLITE_OK {
             return Err(ChangesetError::ChangegroupAddFailed(
                 SqliteErrorCode::from_error(rc),

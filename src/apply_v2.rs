@@ -9,15 +9,15 @@ use std::ptr;
 
 use diesel::SqliteConnection;
 
-use crate::changeset::{ChangesetError, ChangesetOp, ChangesetValue};
+use crate::changeset::{ChangesetError, ChangesetOp, ChangesetRow, ChangesetValue};
 use crate::errors::{ApplyError, ConflictAction, ConflictType, SqliteErrorCode};
 use crate::ffi::{
     sqlite3_changeset_iter, sqlite3_free, sqlite3_value, sqlite3changeset_apply_v2,
-    sqlite3changeset_apply_v2_strm, sqlite3changeset_conflict, sqlite3changeset_fk_conflicts,
-    sqlite3changeset_new, sqlite3changeset_old, sqlite3changeset_op,
-    SQLITE_CHANGESETAPPLY_FKNOACTION, SQLITE_CHANGESETAPPLY_IGNORENOOP,
-    SQLITE_CHANGESETAPPLY_INVERT, SQLITE_CHANGESETAPPLY_NOSAVEPOINT, SQLITE_CHANGESET_ABORT,
-    SQLITE_OK, SQLITE_TOOBIG,
+    sqlite3changeset_apply_v2_strm, sqlite3changeset_apply_v3, sqlite3changeset_apply_v3_strm,
+    sqlite3changeset_conflict, sqlite3changeset_fk_conflicts, sqlite3changeset_new,
+    sqlite3changeset_old, sqlite3changeset_op, SQLITE_CHANGESETAPPLY_FKNOACTION,
+    SQLITE_CHANGESETAPPLY_IGNORENOOP, SQLITE_CHANGESETAPPLY_INVERT,
+    SQLITE_CHANGESETAPPLY_NOSAVEPOINT, SQLITE_CHANGESET_ABORT, SQLITE_OK, SQLITE_TOOBIG,
 };
 
 /// Flag bitmask for [`SqliteSessionExt::apply_changeset_with`](crate::SqliteSessionExt::apply_changeset_with).
@@ -555,6 +555,188 @@ where
     } else {
         ctx.conflict_panicked = true;
         ConflictAction::Abort
+    }
+}
+
+/// Backing implementation for
+/// [`SqliteSessionExt::apply_changeset_v3_with`](crate::SqliteSessionExt::apply_changeset_v3_with).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_changeset_v3_with<Filter, Conflict>(
+    conn: &mut SqliteConnection,
+    changeset: &[u8],
+    flags: ApplyFlags,
+    filter: Filter,
+    on_conflict: Conflict,
+) -> Result<ApplyOutcome, ApplyError>
+where
+    Filter: Fn(ChangesetRow<'_>) -> bool,
+    Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
+{
+    if changeset.is_empty() {
+        return Ok(ApplyOutcome { rebase: Vec::new() });
+    }
+    let data_len = c_int::try_from(changeset.len())
+        .map_err(|_| ApplyError::ApplyFailed(SqliteErrorCode::from_error(SQLITE_TOOBIG)))?;
+
+    let mut ctx = ApplyV2Context {
+        filter,
+        conflict: on_conflict,
+        aborted: false,
+        filter_panicked: false,
+        conflict_panicked: false,
+    };
+
+    let mut rebase_ptr: *mut c_void = ptr::null_mut();
+    let mut rebase_len: c_int = 0;
+
+    // SAFETY: `with_raw_connection` yields a live `sqlite3*`; `ctx` outlives
+    // the FFI call from this stack frame.
+    let rc = unsafe {
+        conn.with_raw_connection(|raw| {
+            sqlite3changeset_apply_v3(
+                raw,
+                data_len,
+                changeset.as_ptr().cast::<c_void>().cast_mut(),
+                Some(v3_filter_trampoline::<Filter, Conflict>),
+                Some(conflict_trampoline::<Filter, Conflict>),
+                ptr::addr_of_mut!(ctx).cast::<c_void>(),
+                &mut rebase_ptr,
+                &mut rebase_len,
+                flags.bits(),
+            )
+        })
+    };
+
+    finalize_v3(&ctx, rc, rebase_ptr, rebase_len)
+}
+
+/// Streamed backing implementation for
+/// [`SqliteSessionExt::apply_changeset_v3_strm_with`](crate::SqliteSessionExt::apply_changeset_v3_strm_with).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_changeset_v3_strm_with<R, Filter, Conflict>(
+    conn: &mut SqliteConnection,
+    reader: R,
+    flags: ApplyFlags,
+    filter: Filter,
+    on_conflict: Conflict,
+) -> Result<ApplyOutcome, ApplyError>
+where
+    R: std::io::Read,
+    Filter: Fn(ChangesetRow<'_>) -> bool,
+    Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
+{
+    let mut ctx = ApplyV2Context {
+        filter,
+        conflict: on_conflict,
+        aborted: false,
+        filter_panicked: false,
+        conflict_panicked: false,
+    };
+    let mut input_ctx = crate::streaming::InputContext::new(reader);
+    let input_ptr = ptr::addr_of_mut!(input_ctx).cast::<c_void>();
+
+    let mut rebase_ptr: *mut c_void = ptr::null_mut();
+    let mut rebase_len: c_int = 0;
+
+    // SAFETY: contexts live on this stack frame; callback signatures match.
+    let rc = unsafe {
+        conn.with_raw_connection(|raw| {
+            sqlite3changeset_apply_v3_strm(
+                raw,
+                Some(crate::streaming::read_trampoline::<R>),
+                input_ptr,
+                Some(v3_filter_trampoline::<Filter, Conflict>),
+                Some(conflict_trampoline::<Filter, Conflict>),
+                ptr::addr_of_mut!(ctx).cast::<c_void>(),
+                &mut rebase_ptr,
+                &mut rebase_len,
+                flags.bits(),
+            )
+        })
+    };
+
+    if let Some(err) = input_ctx.error.take() {
+        if !rebase_ptr.is_null() {
+            // SAFETY: sqlite_malloc-allocated buffer.
+            unsafe { sqlite3_free(rebase_ptr) };
+        }
+        return Err(ApplyError::ReaderIo(err));
+    }
+    if input_ctx.panicked {
+        if !rebase_ptr.is_null() {
+            // SAFETY: sqlite_malloc-allocated buffer.
+            unsafe { sqlite3_free(rebase_ptr) };
+        }
+        return Err(ApplyError::ReaderPanicked);
+    }
+
+    finalize_v3(&ctx, rc, rebase_ptr, rebase_len)
+}
+
+/// Common post-call bookkeeping shared by the buffered and streamed v3 paths.
+fn finalize_v3<Filter, Conflict>(
+    ctx: &ApplyV2Context<Filter, Conflict>,
+    rc: c_int,
+    rebase_ptr: *mut c_void,
+    rebase_len: c_int,
+) -> Result<ApplyOutcome, ApplyError> {
+    let mut rebase_bytes = Vec::new();
+    if !rebase_ptr.is_null() && rebase_len > 0 {
+        let n = usize::try_from(rebase_len).unwrap_or(0);
+        // SAFETY: SQLite reports `n` readable bytes at `rebase_ptr`.
+        let slice = unsafe { std::slice::from_raw_parts(rebase_ptr.cast::<u8>(), n) };
+        rebase_bytes.extend_from_slice(slice);
+    }
+    if !rebase_ptr.is_null() {
+        // SAFETY: sqlite_malloc-allocated buffer.
+        unsafe { sqlite3_free(rebase_ptr) };
+    }
+
+    if ctx.filter_panicked {
+        return Err(ApplyError::FilterPanicked);
+    }
+    if ctx.conflict_panicked {
+        return Err(ApplyError::ConflictHandlerPanicked);
+    }
+    if ctx.aborted {
+        return Err(ApplyError::ConflictAborted);
+    }
+    if rc != SQLITE_OK && rc != SQLITE_CHANGESET_ABORT {
+        return Err(ApplyError::ApplyFailed(SqliteErrorCode::from_error(rc)));
+    }
+    Ok(ApplyOutcome {
+        rebase: rebase_bytes,
+    })
+}
+
+/// C trampoline for the v3 `xFilter` (receives a live iterator, not just a
+/// table name).
+///
+/// # Safety
+///
+/// `ctx_ptr` must point to a live `ApplyV2Context<Filter, Conflict>` and
+/// `iter` must be the iterator SQLite supplies for the call.
+unsafe extern "C" fn v3_filter_trampoline<Filter, Conflict>(
+    ctx_ptr: *mut c_void,
+    iter: *mut sqlite3_changeset_iter,
+) -> c_int
+where
+    Filter: Fn(ChangesetRow<'_>) -> bool,
+    Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
+{
+    // SAFETY: `ctx_ptr` matches the type we installed.
+    let ctx = unsafe { &mut *(ctx_ptr.cast::<ApplyV2Context<Filter, Conflict>>()) };
+    // SAFETY: `iter` is the live iterator SQLite hands us for this row.
+    let Ok(row) = (unsafe { ChangesetRow::read_current(iter) }) else {
+        return 0;
+    };
+    match catch_unwind(AssertUnwindSafe(|| (ctx.filter)(row))) {
+        Ok(true) => 1,
+        Ok(false) => 0,
+        Err(_) => {
+            ctx.filter_panicked = true;
+            0
+        }
     }
 }
 

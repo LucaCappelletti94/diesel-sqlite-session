@@ -358,6 +358,42 @@ The conflict callback receives a `ConflictInfo`: `old_value(i)` (pre-image), `ne
 
 Flags: `NOSAVEPOINT` (skip the wrapping `SAVEPOINT`), `INVERT` (apply the inverse), `IGNORENOOP` (suppress the conflict callback for `UPDATE` rows whose replica value already matches the post-image), `FKNOACTION` (skip `NO ACTION` FK handling on cascades). Compose with `|`.
 
+`apply_changeset_v3_with` (and its streamed sibling) hands the filter the whole `ChangesetRow` instead of just the table name, so it can inspect op, PK layout, and column values.
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{ApplyFlags, ChangesetOp, ChangesetRow, ConflictAction, SqliteSessionExt};
+
+# let mut conn = SqliteConnection::establish(":memory:").unwrap();
+# diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+#     .execute(&mut conn).unwrap();
+# let mut session = conn.create_session().unwrap();
+# session.attach_all().unwrap();
+# diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 11)")
+#     .execute(&mut conn).unwrap();
+# diesel::sql_query("INSERT INTO items (id, v) VALUES (2, 20)")
+#     .execute(&mut conn).unwrap();
+# let changeset = session.changeset().unwrap();
+# drop(session);
+# let mut replica = SqliteConnection::establish(":memory:").unwrap();
+# diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+#     .execute(&mut replica).unwrap();
+// Only apply rows whose new `v` is odd.
+replica.apply_changeset_v3_with(
+    &changeset,
+    ApplyFlags::empty(),
+    |row: ChangesetRow<'_>| {
+        if row.op() != ChangesetOp::Insert {
+            return true;
+        }
+        let v = row.new_value(1).unwrap().unwrap().as_i64();
+        v % 2 == 1
+    },
+    |_| ConflictAction::Abort,
+)?;
+# Ok::<_, diesel_sqlite_session::ApplyError>(())
+```
+
 ### Transform Helpers
 
 Three standalone helpers cover the read-only transforms `SQLite` supports on changeset blobs:
@@ -403,6 +439,34 @@ let _merged = group.output()?;
 ```
 
 `Changegroup::set_schema` binds a connection so the group can reconcile `WITHOUT ROWID` tables and per-table column types. Plain rowid changesets fold in without one. `Changegroup` is `!Send + !Sync`. Drop it before the connection that any attached schema refers to.
+
+`Changegroup::add_change` folds a single positioned `ChangesetReader` row into the group, so you can pick individual rows without materializing an intermediate blob.
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{Changegroup, ChangesetReader, SqliteSessionExt};
+
+# let mut conn = SqliteConnection::establish(":memory:").unwrap();
+# diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+#     .execute(&mut conn).unwrap();
+# let mut session = conn.create_session().unwrap();
+# session.attach_all().unwrap();
+# diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 10), (2, 20), (3, 30)")
+#     .execute(&mut conn).unwrap();
+# let bytes = session.changeset().unwrap();
+# drop(session);
+let mut group = Changegroup::new()?;
+let mut reader = ChangesetReader::open(&bytes)?;
+while let Some(row) = reader.next()? {
+    let id = row.new_value(0)?.unwrap().as_i64();
+    if id % 2 == 1 {
+        group.add_change(&row)?;
+    }
+}
+let merged = group.output()?;
+# assert!(!merged.is_empty());
+# Ok::<_, diesel_sqlite_session::ChangesetError>(())
+```
 
 ### Session Controls
 

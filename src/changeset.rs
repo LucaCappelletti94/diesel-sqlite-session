@@ -575,6 +575,14 @@ impl<'a> ChangesetRow<'a> {
         })
     }
 
+    /// Raw iterator pointer at this row (used by
+    /// [`crate::Changegroup::add_change`] to fold a single change without
+    /// re-serializing the whole changeset).
+    #[must_use]
+    pub(crate) fn as_raw_iter(&self) -> *mut sqlite3_changeset_iter {
+        self.iter
+    }
+
     /// The row's operation kind.
     #[must_use]
     pub fn op(&self) -> ChangesetOp {

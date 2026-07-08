@@ -198,6 +198,44 @@ pub trait SqliteSessionExt {
         R: std::io::Read,
         Filter: Fn(&str) -> bool,
         Conflict: Fn(ConflictInfo<'_>) -> ConflictAction;
+
+    /// v3 apply where the filter receives the whole [`ChangesetRow`]
+    /// (`sqlite3changeset_apply_v3`). Use it when the filter needs op,
+    /// values, or the PK layout before deciding.
+    ///
+    /// # Errors
+    ///
+    /// Same set as [`apply_changeset_with`](Self::apply_changeset_with),
+    /// under the v3 filter shape.
+    fn apply_changeset_v3_with<Filter, Conflict>(
+        &mut self,
+        changeset: &[u8],
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        Filter: Fn(ChangesetRow<'_>) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction;
+
+    /// Streamed [`apply_changeset_v3_with`](Self::apply_changeset_v3_with)
+    /// backed by `sqlite3changeset_apply_v3_strm`.
+    ///
+    /// # Errors
+    ///
+    /// Same set as [`apply_changeset_v3_with`](Self::apply_changeset_v3_with)
+    /// plus [`ApplyError::ReaderIo`] and [`ApplyError::ReaderPanicked`].
+    fn apply_changeset_v3_strm_with<R, Filter, Conflict>(
+        &mut self,
+        reader: R,
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        R: std::io::Read,
+        Filter: Fn(ChangesetRow<'_>) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction;
 }
 
 impl SqliteSessionExt for SqliteConnection {
@@ -271,5 +309,36 @@ impl SqliteSessionExt for SqliteConnection {
         Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
     {
         apply_v2::apply_changeset_strm_with(self, reader, flags, filter, on_conflict)
+    }
+
+    #[inline]
+    fn apply_changeset_v3_with<Filter, Conflict>(
+        &mut self,
+        changeset: &[u8],
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        Filter: Fn(ChangesetRow<'_>) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
+    {
+        apply_v2::apply_changeset_v3_with(self, changeset, flags, filter, on_conflict)
+    }
+
+    #[inline]
+    fn apply_changeset_v3_strm_with<R, Filter, Conflict>(
+        &mut self,
+        reader: R,
+        flags: ApplyFlags,
+        filter: Filter,
+        on_conflict: Conflict,
+    ) -> Result<ApplyOutcome, ApplyError>
+    where
+        R: std::io::Read,
+        Filter: Fn(ChangesetRow<'_>) -> bool,
+        Conflict: Fn(ConflictInfo<'_>) -> ConflictAction,
+    {
+        apply_v2::apply_changeset_v3_strm_with(self, reader, flags, filter, on_conflict)
     }
 }

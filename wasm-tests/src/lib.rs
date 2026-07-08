@@ -8,8 +8,8 @@ use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
     concat_changesets, invert_changeset, ApplyFlags, BlobError, BlobMode, Changegroup, ChangesetOp,
-    ChangesetReader, ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp, Rebaser,
-    SqliteSessionExt,
+    ChangesetReader, ChangesetRow, ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp,
+    Rebaser, SqliteSessionExt,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -1018,4 +1018,81 @@ async fn rebaser_multi_master_convergence_wasm() {
             .get_result(&mut peer_b)
             .unwrap();
     assert_eq!(value_on_a, value_on_b);
+}
+
+#[wasm_bindgen_test]
+async fn apply_changeset_v3_with_filters_by_row_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'keep', 11)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'skip', 20)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset_v3_with(
+            &bytes,
+            ApplyFlags::empty(),
+            |row: ChangesetRow<'_>| {
+                if row.op() == ChangesetOp::Insert {
+                    let v = row.new_value(2).unwrap().unwrap().as_i64();
+                    v % 2 == 1
+                } else {
+                    true
+                }
+            },
+            |_| ConflictAction::Abort,
+        )
+        .expect("v3 apply succeeds");
+    assert_eq!(count_rows(&mut replica), 1);
+}
+
+#[wasm_bindgen_test]
+async fn changegroup_add_change_folds_per_row_wasm() {
+    let mut source = create_connection();
+    setup_table(&mut source);
+    let mut session = source.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'a', 10)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (2, 'b', 20)")
+        .execute(&mut source)
+        .unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (3, 'c', 30)")
+        .execute(&mut source)
+        .unwrap();
+    let bytes = session.changeset().unwrap();
+    drop(session);
+
+    let mut group = Changegroup::new().unwrap();
+    let mut reader = ChangesetReader::open(&bytes).unwrap();
+    while let Some(row) = reader.next().unwrap() {
+        let id = row.new_value(0).unwrap().unwrap().as_i64();
+        if id != 2 {
+            group.add_change(&row).unwrap();
+        }
+    }
+    let merged = group.output().unwrap();
+    drop(reader);
+
+    let mut replica = create_connection();
+    setup_table(&mut replica);
+    replica
+        .apply_changeset_with(
+            &merged,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap();
+    assert_eq!(count_rows(&mut replica), 2);
 }
