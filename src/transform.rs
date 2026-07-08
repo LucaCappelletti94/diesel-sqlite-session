@@ -1,6 +1,6 @@
 //! Changeset transform helpers: `invert` (undo), `concat` (pairwise merge),
-//! and the `Changegroup` n-way merge. Wraps `sqlite3changeset_invert`,
-//! `sqlite3changeset_concat`, and the `sqlite3changegroup_*` family.
+//! the `Changegroup` n-way merge, and the `Rebaser` for multi-master
+//! conflict rewriting.
 
 use std::ffi::{c_int, c_void, CString};
 use std::marker::PhantomData;
@@ -11,10 +11,12 @@ use diesel::SqliteConnection;
 use crate::changeset::ChangesetError;
 use crate::errors::SqliteErrorCode;
 use crate::ffi::{
-    sqlite3_changegroup, sqlite3_free, sqlite3changegroup_add, sqlite3changegroup_add_strm,
-    sqlite3changegroup_delete, sqlite3changegroup_new, sqlite3changegroup_output,
-    sqlite3changegroup_output_strm, sqlite3changegroup_schema, sqlite3changeset_concat,
-    sqlite3changeset_concat_strm, sqlite3changeset_invert, sqlite3changeset_invert_strm, SQLITE_OK,
+    sqlite3_changegroup, sqlite3_free, sqlite3_rebaser, sqlite3changegroup_add,
+    sqlite3changegroup_add_strm, sqlite3changegroup_delete, sqlite3changegroup_new,
+    sqlite3changegroup_output, sqlite3changegroup_output_strm, sqlite3changegroup_schema,
+    sqlite3changeset_concat, sqlite3changeset_concat_strm, sqlite3changeset_invert,
+    sqlite3changeset_invert_strm, sqlite3rebaser_configure, sqlite3rebaser_create,
+    sqlite3rebaser_delete, sqlite3rebaser_rebase, sqlite3rebaser_rebase_strm, SQLITE_OK,
 };
 
 /// Produce the inverse of `bytes` (`sqlite3changeset_invert`). Every `INSERT`
@@ -433,6 +435,206 @@ impl Drop for Changegroup {
 impl std::fmt::Debug for Changegroup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Changegroup").finish_non_exhaustive()
+    }
+}
+
+/// Rewrite a changeset so it no longer conflicts with an already-applied one
+/// (wraps `sqlite3rebaser_create`, `_configure`, `_rebase`, `_delete`).
+///
+/// # Multi-master workflow
+///
+/// 1. Replica applies changeset A via
+///    [`SqliteSessionExt::apply_changeset_with`](crate::SqliteSessionExt::apply_changeset_with).
+///    Any conflict resolved with [`Replace`](crate::ConflictAction::Replace)
+///    or [`Omit`](crate::ConflictAction::Omit) makes
+///    [`ApplyOutcome::rebase`](crate::ApplyOutcome::rebase) non-empty.
+/// 2. The peer that produced A receives the rebase blob, creates a
+///    [`Rebaser`], `configure`s it with those bytes, then `rebase`s its own
+///    outbound changeset before shipping it elsewhere.
+/// 3. The rebased changeset applies cleanly against destinations that had
+///    already resolved the earlier conflict.
+///
+/// [`Rebaser`] is `!Send + !Sync`, like every other RAII handle here.
+///
+/// ```compile_fail
+/// fn assert_send<T: Send>() {}
+/// use diesel_sqlite_session::Rebaser;
+/// assert_send::<Rebaser>();
+/// ```
+///
+/// ```compile_fail
+/// fn assert_sync<T: Sync>() {}
+/// use diesel_sqlite_session::Rebaser;
+/// assert_sync::<Rebaser>();
+/// ```
+pub struct Rebaser {
+    ptr: *mut sqlite3_rebaser,
+    _not_send_or_sync: PhantomData<*const ()>,
+}
+
+impl Rebaser {
+    /// Allocate a new empty rebaser (`sqlite3rebaser_create`).
+    ///
+    /// # Errors
+    ///
+    /// [`ChangesetError::RebaserCreateFailed`] on allocation failure.
+    pub fn new() -> Result<Self, ChangesetError> {
+        let mut ptr: *mut sqlite3_rebaser = ptr::null_mut();
+        // SAFETY: `sqlite3rebaser_create` writes an owned allocation on OK.
+        let rc = unsafe { sqlite3rebaser_create(&mut ptr) };
+        if rc != SQLITE_OK {
+            if !ptr.is_null() {
+                // SAFETY: hand back partial allocation for freeing.
+                unsafe { sqlite3rebaser_delete(ptr) };
+            }
+            return Err(ChangesetError::RebaserCreateFailed(
+                SqliteErrorCode::from_error(rc),
+            ));
+        }
+        if ptr.is_null() {
+            return Err(ChangesetError::RebaserCreateFailed(SqliteErrorCode::Error));
+        }
+        Ok(Self {
+            ptr,
+            _not_send_or_sync: PhantomData,
+        })
+    }
+
+    /// Feed a rebase blob from
+    /// [`ApplyOutcome::rebase`](crate::ApplyOutcome::rebase). Stack multiple
+    /// calls to extend the rebaser with more resolutions.
+    ///
+    /// # Errors
+    ///
+    /// - [`ChangesetError::EmptyChangeset`] if `rebase` is empty. `SQLite`
+    ///   rejects an empty buffer, but the pre-flight check gives a clearer
+    ///   error.
+    /// - [`ChangesetError::LengthOverflow`] if `rebase.len()` overflows
+    ///   `i32`.
+    /// - [`ChangesetError::RebaserConfigureFailed`] on any `SQLite`-reported
+    ///   error.
+    pub fn configure(&mut self, rebase: &[u8]) -> Result<(), ChangesetError> {
+        if rebase.is_empty() {
+            return Err(ChangesetError::EmptyChangeset);
+        }
+        let len = c_int::try_from(rebase.len()).map_err(|_| ChangesetError::LengthOverflow {
+            value: rebase.len(),
+        })?;
+        // SAFETY: `self.ptr` is a live rebaser and `rebase` is a valid slice.
+        let rc =
+            unsafe { sqlite3rebaser_configure(self.ptr, len, rebase.as_ptr().cast::<c_void>()) };
+        if rc != SQLITE_OK {
+            return Err(ChangesetError::RebaserConfigureFailed(
+                SqliteErrorCode::from_error(rc),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Rewrite `changeset` so it no longer conflicts with the rebase blobs
+    /// installed via [`configure`](Self::configure). Returns the rewritten
+    /// bytes.
+    ///
+    /// # Errors
+    ///
+    /// - [`ChangesetError::EmptyChangeset`] if `changeset` is empty.
+    /// - [`ChangesetError::LengthOverflow`] if `changeset.len()` overflows
+    ///   `i32`.
+    /// - [`ChangesetError::RebaserRebaseFailed`] on any `SQLite`-reported
+    ///   error.
+    pub fn rebase(&self, changeset: &[u8]) -> Result<Vec<u8>, ChangesetError> {
+        if changeset.is_empty() {
+            return Err(ChangesetError::EmptyChangeset);
+        }
+        let n_in =
+            c_int::try_from(changeset.len()).map_err(|_| ChangesetError::LengthOverflow {
+                value: changeset.len(),
+            })?;
+        let mut out_ptr: *mut c_void = ptr::null_mut();
+        let mut out_len: c_int = 0;
+        // SAFETY: `sqlite3rebaser_rebase` treats `changeset` as read-only.
+        let rc = unsafe {
+            sqlite3rebaser_rebase(
+                self.ptr,
+                n_in,
+                changeset.as_ptr().cast::<c_void>(),
+                &mut out_len,
+                &mut out_ptr,
+            )
+        };
+        if rc != SQLITE_OK {
+            if !out_ptr.is_null() {
+                // SAFETY: `sqlite3_malloc`-allocated buffer.
+                unsafe { sqlite3_free(out_ptr) };
+            }
+            return Err(ChangesetError::RebaserRebaseFailed(
+                SqliteErrorCode::from_error(rc),
+            ));
+        }
+        Ok(copy_and_free(out_ptr, out_len))
+    }
+
+    /// Streamed [`rebase`](Self::rebase) backed by `sqlite3rebaser_rebase_strm`.
+    ///
+    /// # Errors
+    ///
+    /// - [`ChangesetError::ReaderIo`] / [`ChangesetError::ReaderPanicked`]
+    ///   for reader failures.
+    /// - [`ChangesetError::WriterIo`] / [`ChangesetError::WriterPanicked`]
+    ///   for writer failures.
+    /// - [`ChangesetError::RebaserRebaseFailed`] for any other
+    ///   `SQLite`-reported error.
+    pub fn rebase_strm<R, W>(&self, reader: R, writer: W) -> Result<(), ChangesetError>
+    where
+        R: std::io::Read,
+        W: std::io::Write,
+    {
+        let mut input_ctx = crate::streaming::InputContext::new(reader);
+        let mut output_ctx = crate::streaming::OutputContext::new(writer);
+        // SAFETY: both contexts live on this stack frame for the whole call.
+        let rc = unsafe {
+            sqlite3rebaser_rebase_strm(
+                self.ptr,
+                Some(crate::streaming::read_trampoline::<R>),
+                ptr::addr_of_mut!(input_ctx).cast::<c_void>(),
+                Some(crate::streaming::write_trampoline::<W>),
+                ptr::addr_of_mut!(output_ctx).cast::<c_void>(),
+            )
+        };
+        if let Some(err) = input_ctx.error.take() {
+            return Err(ChangesetError::ReaderIo(err));
+        }
+        if input_ctx.panicked {
+            return Err(ChangesetError::ReaderPanicked);
+        }
+        if let Some(err) = output_ctx.error.take() {
+            return Err(ChangesetError::WriterIo(err));
+        }
+        if output_ctx.panicked {
+            return Err(ChangesetError::WriterPanicked);
+        }
+        if rc != SQLITE_OK {
+            return Err(ChangesetError::RebaserRebaseFailed(
+                SqliteErrorCode::from_error(rc),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Rebaser {
+    fn drop(&mut self) {
+        // SAFETY: `self.ptr` came from `sqlite3rebaser_create` and no other
+        // path frees it.
+        unsafe {
+            sqlite3rebaser_delete(self.ptr);
+        }
+    }
+}
+
+impl std::fmt::Debug for Rebaser {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rebaser").finish_non_exhaustive()
     }
 }
 

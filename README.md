@@ -449,6 +449,63 @@ set_stream_size(64 * 1024).unwrap();
 
 `set_indirect(true)` tags subsequent changes as indirect (readable via `ChangesetRow::indirect()`). `set_table_filter(cb)` swaps in a callback consulted by `attach_all` and `diff`, replacing any previous filter. `set_size_tracking(true)` is required before `changeset_size()` returns non-zero. `set_rowid_tracking(true)` enables `WITHOUT ROWID` tracking. `diff(db, table)` populates the session with the delta between an attached database's table and its same-named counterpart in the session's own database. `stream_size` / `set_stream_size` control the module-wide default chunk size used by streamed APIs.
 
+### Rebaser (Multi-master Convergence)
+
+`Rebaser` wraps `sqlite3rebaser_create` / `_configure` / `_rebase` / `_delete`. It rewrites a changeset so it no longer conflicts with one already applied. Pair it with `ApplyOutcome::rebase` from `apply_changeset_with` to close the multi-master sync loop.
+
+```rust
+use diesel::prelude::*;
+use diesel_sqlite_session::{ApplyFlags, ConflictAction, Rebaser, SqliteSessionExt};
+
+fn open() -> SqliteConnection {
+    let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    diesel::sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut conn).unwrap();
+    conn
+}
+
+// Peer A and peer B both write to id=1 with different values.
+let mut peer_a = open();
+let mut peer_b = open();
+let mut session_a = peer_a.create_session().unwrap();
+session_a.attach_all().unwrap();
+diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+    .execute(&mut peer_a).unwrap();
+let changeset_a = session_a.changeset().unwrap();
+drop(session_a);
+
+let mut session_b = peer_b.create_session().unwrap();
+session_b.attach_all().unwrap();
+diesel::sql_query("INSERT INTO items (id, v) VALUES (1, 99)")
+    .execute(&mut peer_b).unwrap();
+let changeset_b = session_b.changeset().unwrap();
+drop(session_b);
+
+// Peer B applies A first, Replace-resolves the conflict, and captures the
+// rebase blob.
+let outcome = peer_b.apply_changeset_with(
+    &changeset_a,
+    ApplyFlags::empty(),
+    |_| true,
+    |_| ConflictAction::Replace,
+).unwrap();
+assert!(!outcome.rebase.is_empty());
+
+// Peer A rewrites its view of B's outbound changeset so it applies cleanly.
+let mut rebaser = Rebaser::new()?;
+rebaser.configure(&outcome.rebase)?;
+let rebased_b = rebaser.rebase(&changeset_b)?;
+peer_a.apply_changeset_with(
+    &rebased_b,
+    ApplyFlags::empty(),
+    |_| true,
+    |_| ConflictAction::Abort,
+).unwrap();
+# Ok::<_, diesel_sqlite_session::ChangesetError>(())
+```
+
+`Rebaser` is `!Send + !Sync` and RAII. `configure` can be called repeatedly to stack rebase blobs before calling `rebase`. `rebase_strm(reader, writer)` is the streamed equivalent when the changeset does not fit in memory.
+
 ## Platform Support
 
 | Platform | Backend | Status |

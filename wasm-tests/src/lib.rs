@@ -8,7 +8,7 @@ use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
     concat_changesets, invert_changeset, ApplyFlags, BlobError, BlobMode, Changegroup, ChangesetOp,
-    ChangesetReader, ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp,
+    ChangesetReader, ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp, Rebaser,
     SqliteSessionExt,
 };
 use parking_lot::Mutex;
@@ -957,4 +957,65 @@ async fn session_size_tracking_reports_nonzero_changeset_size_wasm() {
         .unwrap();
     assert!(session.changeset_size() > 0);
     assert!(session.memory_used() > 0);
+}
+
+#[wasm_bindgen_test]
+async fn rebaser_multi_master_convergence_wasm() {
+    // Two peers write to the same primary key. Peer B applies A first with
+    // Replace and captures the rebase blob. Rebase B's outbound changeset
+    // against the blob so peer A can apply it without conflicting.
+    let mut peer_a = create_connection();
+    setup_table(&mut peer_a);
+    let mut peer_b = create_connection();
+    setup_table(&mut peer_b);
+
+    let mut session_a = peer_a.create_session().unwrap();
+    session_a.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'A', 10)")
+        .execute(&mut peer_a)
+        .unwrap();
+    let cs_a = session_a.changeset().unwrap();
+    drop(session_a);
+
+    let mut session_b = peer_b.create_session().unwrap();
+    session_b.attach_all().unwrap();
+    sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'B', 99)")
+        .execute(&mut peer_b)
+        .unwrap();
+    let cs_b = session_b.changeset().unwrap();
+    drop(session_b);
+
+    let outcome = peer_b
+        .apply_changeset_with(
+            &cs_a,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Replace,
+        )
+        .expect("apply_v2 with Replace succeeds");
+    let rebase_bytes = outcome.rebase;
+    assert!(!rebase_bytes.is_empty());
+
+    let mut rebaser = Rebaser::new().expect("rebaser new");
+    rebaser.configure(&rebase_bytes).unwrap();
+    let rewritten_b = rebaser.rebase(&cs_b).expect("rebase cs_b succeeds");
+
+    peer_a
+        .apply_changeset_with(
+            &rewritten_b,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .expect("apply rewritten_b on peer A succeeds");
+
+    let value_on_a: i32 =
+        diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT value FROM test_items WHERE id = 1")
+            .get_result(&mut peer_a)
+            .unwrap();
+    let value_on_b: i32 =
+        diesel::dsl::sql::<diesel::sql_types::Integer>("SELECT value FROM test_items WHERE id = 1")
+            .get_result(&mut peer_b)
+            .unwrap();
+    assert_eq!(value_on_a, value_on_b);
 }

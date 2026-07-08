@@ -24,7 +24,8 @@ pub use preupdate::{
 };
 pub use session::{set_stream_size, stream_size, Session};
 pub use transform::{
-    concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm, Changegroup,
+    concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm,
+    Changegroup, Rebaser,
 };
 
 use diesel::SqliteConnection;

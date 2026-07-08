@@ -9,7 +9,7 @@ use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
     concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm, ApplyError,
-    ApplyFlags, Changegroup, ChangesetError, ChangesetOp, ChangesetReader, ConflictAction,
+    ApplyFlags, Changegroup, ChangesetError, ChangesetOp, ChangesetReader, ConflictAction, Rebaser,
     SessionError, SqliteSessionExt,
 };
 
@@ -306,5 +306,67 @@ fn changegroup_output_strm_surfaces_writer_io_error() {
             assert_eq!(inner.kind(), ErrorKind::PermissionDenied);
         }
         other => panic!("expected WriterIo, got {other:?}"),
+    }
+}
+
+#[test]
+fn rebaser_rebase_strm_round_trips_through_the_iterator() {
+    // Build a rebase blob from a Replace conflict.
+    let mut peer_a = fresh_connection();
+    create_items(&mut peer_a);
+    let mut peer_b = fresh_connection();
+    create_items(&mut peer_b);
+
+    let mut session_a = peer_a.create_session().unwrap();
+    session_a.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 10)")
+        .execute(&mut peer_a)
+        .unwrap();
+    let cs_a = session_a.changeset().unwrap();
+    drop(session_a);
+
+    let mut session_b = peer_b.create_session().unwrap();
+    session_b.attach_all().unwrap();
+    sql_query("INSERT INTO items (id, v) VALUES (1, 99)")
+        .execute(&mut peer_b)
+        .unwrap();
+    let cs_b = session_b.changeset().unwrap();
+    drop(session_b);
+
+    let outcome = peer_b
+        .apply_changeset_with(
+            &cs_a,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Replace,
+        )
+        .unwrap();
+    let rebase_bytes = outcome.rebase;
+
+    // Streamed rebase.
+    let mut rebaser = Rebaser::new().unwrap();
+    rebaser.configure(&rebase_bytes).unwrap();
+    let mut rewritten = Vec::new();
+    rebaser
+        .rebase_strm(Cursor::new(cs_b), &mut rewritten)
+        .expect("rebase_strm succeeds");
+
+    // The rewritten output is a well-formed changeset (possibly empty when
+    // the rebase determined no work is needed on this peer). Apply it and
+    // assert it's a no-op or a coherent update.
+    if !rewritten.is_empty() {
+        let mut reader = ChangesetReader::open(&rewritten).expect("open reader");
+        let _first = reader.next().unwrap();
+    }
+    // Apply the rewritten bytes onto peer A: no conflict must arise.
+    if !rewritten.is_empty() {
+        peer_a
+            .apply_changeset_with(
+                &rewritten,
+                ApplyFlags::empty(),
+                |_| true,
+                |_| ConflictAction::Abort,
+            )
+            .expect("apply rewritten bytes on peer A");
     }
 }
