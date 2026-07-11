@@ -67,7 +67,7 @@ diesel::sql_query("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT NOT NUL
 replica.apply_patchset(&patchset, |_| ConflictAction::Abort).unwrap();
 ```
 
-Full API reference and runnable examples for every method live on [docs.rs](https://docs.rs/diesel-sqlite-session), organized by module: pre-update hook, incremental blob I/O, changeset iterator, enhanced apply (`v2` and `v3`), transform helpers (`invert`, `concat`, `Changegroup`), session controls (`diff`, `set_table_filter`, size and rowid tracking), and the `Rebaser` for multi-master convergence. Every SQLite entry point that ships a streamed C sibling has a matching `_strm` method on the Rust side.
+Full API reference and runnable examples for every method live on [docs.rs](https://docs.rs/diesel-sqlite-session), organized by module: pre-update hook, incremental blob I/O, changeset iterator, enhanced apply (`v2` and `v3`), transform helpers (`invert`, `concat`, `Changegroup`), session controls (`diff`, `set_table_filter`, size and rowid tracking), and the `Rebaser` for multi-master convergence. Every `SQLite` entry point that ships a streamed C sibling has a matching `_strm` method on the Rust side.
 
 ## Platform Support
 
