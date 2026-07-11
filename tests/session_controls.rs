@@ -336,3 +336,41 @@ fn apply_v2_carries_indirect_flag_through_into_changeset_readers() {
     let row = reader.next().expect("advance").expect("saw the row");
     assert!(row.indirect(), "indirect flag survives round trip");
 }
+
+#[test]
+fn session_can_move_across_a_thread_boundary_and_still_produce_a_changeset() {
+    // Move a session onto a worker, emit a changeset, and apply it back.
+    let mut conn = fresh_connection();
+    sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut conn)
+        .unwrap();
+    let mut session = conn.create_session().unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO t (id, v) VALUES (1, 10)")
+        .execute(&mut conn)
+        .unwrap();
+
+    let handle = std::thread::spawn(move || {
+        assert!(!session.is_empty(), "session captured the insert");
+        session.changeset().expect("changeset succeeds off-thread")
+    });
+    let bytes = handle.join().expect("worker thread panicked");
+    assert!(!bytes.is_empty(), "off-thread changeset is non-empty");
+
+    let mut replica = fresh_connection();
+    sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, v INTEGER)")
+        .execute(&mut replica)
+        .unwrap();
+    replica
+        .apply_changeset_with(
+            &bytes,
+            ApplyFlags::empty(),
+            |_| true,
+            |_| ConflictAction::Abort,
+        )
+        .unwrap();
+
+    let mut reader = ChangesetReader::open(&bytes).unwrap();
+    let row = reader.next().expect("advance").expect("saw the row");
+    assert!(matches!(row.op(), ChangesetOp::Insert));
+}

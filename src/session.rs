@@ -1,10 +1,8 @@
 //! `SQLite` session management for Diesel connections.
 
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
-use std::marker::PhantomData;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
-use std::rc::Rc;
 
 use diesel::internal::table_macro::{Identifier, StaticQueryFragment};
 use diesel::SqliteConnection;
@@ -25,15 +23,15 @@ use crate::ffi::{
 ///
 /// # Safety
 ///
-/// Holds a raw pointer to the `SQLite` handle. Drop the session before the
-/// connection it was created from; using it afterwards is undefined behavior.
+/// Wraps a raw session handle. Drop before the connection. Using it
+/// afterwards is undefined behavior.
 ///
 /// # Threading
 ///
-/// `Session` is neither [`Send`] nor [`Sync`]: session handles are bound to
-/// the connection state and must stay on the originating thread.
+/// [`Send`] and `!Sync`, matching `diesel::SqliteConnection`. Only one
+/// thread at a time may touch the session or its connection.
 ///
-/// ```compile_fail
+/// ```
 /// fn assert_send<T: Send>() {}
 /// use diesel_sqlite_session::Session;
 /// assert_send::<Session>();
@@ -143,8 +141,14 @@ pub struct Session {
     /// Owned closure kept alive while the filter is registered. Double-boxed
     /// so `pCtx` gets a stable heap address that survives moves of `Session`.
     table_filter: Option<Box<FilterBox>>,
-    _not_send_or_sync: PhantomData<Rc<()>>,
 }
+
+// SAFETY: mirrors `unsafe impl Send for SqliteConnection` upstream. The
+// session handle is derived from `sqlite3*` and inherits its threading
+// rules. `FilterBox` is heap-owned with a stable address and its closure
+// is `Send + 'static`.
+#[allow(unsafe_code)]
+unsafe impl Send for Session {}
 
 struct FilterBox {
     call: Box<dyn FnMut(&str) -> bool + Send>,
@@ -183,7 +187,6 @@ impl Session {
         Ok(Self {
             session,
             table_filter: None,
-            _not_send_or_sync: PhantomData,
         })
     }
 
