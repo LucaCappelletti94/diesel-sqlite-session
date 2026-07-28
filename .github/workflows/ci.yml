@@ -97,14 +97,26 @@ jobs:
           chrome-version: stable
           install-chromedriver: true
 
+      # ChromeDriver resolves the runner's preinstalled `google-chrome` ahead of
+      # the Chrome for Testing build on `PATH`, and the resulting version
+      # mismatch fails session creation. wasm-bindgen 0.2.121 only reads
+      # `sessionId` from that reply, so the failure surfaces as a bare
+      # `http status: 404` on the next request. Name the binary explicitly.
+      - name: Pin the browser binary for webdriver
+        run: |
+          printf '{"goog:chromeOptions":{"binary":"%s"}}\n' \
+            "${{ steps.setup-chrome.outputs.chrome-path }}" \
+            > "${{ runner.temp }}/webdriver.json"
+
       # `wasm-pack` overwrites `CHROMEDRIVER` with whatever it resolves itself,
-      # so the driver has to arrive as an argument to pin it to the browser
-      # `setup-chrome` just installed.
+      # so the driver has to arrive as an argument.
       - name: Run WASM tests (headless Chrome)
         run: |
           cd wasm-tests
           wasm-pack test --headless --chrome \
             --chromedriver "${{ steps.setup-chrome.outputs.chromedriver-path }}"
+        env:
+          WASM_BINDGEN_TEST_WEBDRIVER_JSON: ${{ runner.temp }}/webdriver.json
 
   # Documentation
   docs:
