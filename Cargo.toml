@@ -30,7 +30,10 @@ thiserror = "2"
 
 # Native targets: use libsqlite3-sys
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-libsqlite3-sys = { version = "0.37", features = ["bundled", "session"] }
+# Ceiling matches diesel's `>=0.17.2, <0.39.0`. 0.38 is what makes
+# `libsqlite3-sys/bundled-sqlcipher` usable at all: its SQLCipher tree only
+# reaches `sqlite3changeset_apply_v3` (SQLite 3.51) at 0.38.
+libsqlite3-sys = { version = ">=0.37, <0.39", features = ["bundled", "session"] }
 
 # WASM targets: use sqlite-wasm-rs
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
@@ -39,7 +42,7 @@ sqlite-wasm-rs = "0.5"
 [dev-dependencies]
 diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
-rusqlite = { version = "0.39", features = ["bundled", "session", "buildtime_bindgen"] }
+rusqlite = { version = "0.40", features = ["bundled", "session", "buildtime_bindgen"] }
 parking_lot = "0.12"
 
 [[bench]]
