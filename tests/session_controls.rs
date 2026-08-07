@@ -1,7 +1,7 @@
 //! Integration tests for the session-control extensions: `diff`,
 //! `set_indirect`, `set_table_filter`, `set_size_tracking`,
-//! `set_rowid_tracking`, `memory_used`, `changeset_size`, plus the standalone
-//! `stream_size` / `set_stream_size`.
+//! `set_rowid_tracking`, `memory_used`, `changeset_size`, the `Debug`
+//! rendering, plus the standalone `stream_size` / `set_stream_size`.
 //!
 //! One test per invariant. Each test starts with a fresh in-memory
 //! connection so state cannot leak between cases.
@@ -64,11 +64,11 @@ fn diff_populates_a_session_with_the_delta_between_two_databases() {
 }
 
 #[test]
-fn diff_with_null_byte_in_names_returns_invalid_name() {
+fn diff_names_the_argument_that_carries_a_null_byte() {
     let mut conn = fresh_connection();
     let mut session = conn.create_session().unwrap();
     let err = session.diff("other\0", "items").unwrap_err();
-    assert!(matches!(err, SessionError::InvalidTableName), "{err:?}");
+    assert!(matches!(err, SessionError::InvalidDatabaseName), "{err:?}");
     let err = session.diff("other", "ta\0ble").unwrap_err();
     assert!(matches!(err, SessionError::InvalidTableName), "{err:?}");
 }
@@ -205,6 +205,25 @@ fn remove_table_filter_restores_default_attach_all() {
         !changeset.is_empty(),
         "attach_all worked after remove_table_filter",
     );
+}
+
+#[test]
+fn debug_names_the_type_and_tracks_whether_a_filter_is_installed() {
+    let mut conn = fresh_connection();
+    let mut session = conn.create_session().unwrap();
+
+    let clean = format!("{session:?}");
+    assert!(clean.starts_with("Session {"), "{clean}");
+    assert!(clean.contains(r#"database: "main""#), "{clean}");
+    assert!(clean.contains("has_table_filter: false"), "{clean}");
+
+    session.set_table_filter(|_| true);
+    let filtered = format!("{session:?}");
+    assert!(filtered.contains("has_table_filter: true"), "{filtered}");
+
+    session.remove_table_filter();
+    let cleared = format!("{session:?}");
+    assert!(cleared.contains("has_table_filter: false"), "{cleared}");
 }
 
 #[test]

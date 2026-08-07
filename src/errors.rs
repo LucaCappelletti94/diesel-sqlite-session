@@ -143,9 +143,24 @@ pub enum SessionError {
     #[error("Failed to generate patchset: {0}")]
     PatchsetFailed(SqliteErrorCode),
 
-    /// Table name contains invalid characters.
+    /// Table name contains an interior null byte and cannot become a C string.
     #[error("Table name contains null byte")]
     InvalidTableName,
+
+    /// Database name contains an interior null byte and cannot become a C
+    /// string.
+    #[error("Database name contains null byte")]
+    InvalidDatabaseName,
+
+    /// No database of that name is attached to the connection.
+    #[error("No database named {0:?} is attached to this connection")]
+    UnknownDatabase(String),
+
+    /// A [`PreUpdateHook`](crate::PreUpdateHook) holds this connection's
+    /// pre-update callback slot, which the session extension needs for
+    /// itself.
+    #[error("A pre-update hook is installed on this connection")]
+    PreUpdateHookInstalled,
 
     /// Failed to populate a session via `sqlite3session_diff`.
     #[error("Failed to diff into session: {code}{}", .message.as_deref().map(|m| format!(" ({m})")).unwrap_or_default())]
@@ -436,6 +451,21 @@ mod tests {
         fn display_invalid_table_name() {
             let err = SessionError::InvalidTableName;
             assert_eq!(err.to_string(), "Table name contains null byte");
+        }
+
+        #[test]
+        fn display_invalid_database_name() {
+            let err = SessionError::InvalidDatabaseName;
+            assert_eq!(err.to_string(), "Database name contains null byte");
+        }
+
+        #[test]
+        fn display_unknown_database() {
+            let err = SessionError::UnknownDatabase("side".to_owned());
+            assert_eq!(
+                err.to_string(),
+                "No database named \"side\" is attached to this connection"
+            );
         }
 
         #[test]

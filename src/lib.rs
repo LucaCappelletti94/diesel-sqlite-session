@@ -9,7 +9,9 @@ mod changeset;
 mod errors;
 mod ffi;
 mod preupdate;
+mod schema;
 mod session;
+mod slot;
 mod streaming;
 mod transform;
 
@@ -66,12 +68,53 @@ use diesel::SqliteConnection;
 /// // replica.apply_patchset(&patchset, |_| ConflictAction::Abort).unwrap();
 /// ```
 pub trait SqliteSessionExt {
-    /// Create a new session tracking changes on this connection.
+    /// Create a new session tracking changes on this connection's `main`
+    /// database. Use [`create_session_on`](Self::create_session_on) to track
+    /// an `ATTACH`ed database instead.
     ///
     /// # Errors
     ///
-    /// [`SessionError::CreateFailed`] on any `SQLite` failure.
+    /// - [`SessionError::PreUpdateHookInstalled`] if a [`PreUpdateHook`] holds
+    ///   this connection's pre-update callback slot.
+    /// - [`SessionError::CreateFailed`] on any `SQLite` failure.
     fn create_session(&mut self) -> Result<Session, SessionError>;
+
+    /// Create a new session tracking changes on `database`, which names
+    /// `main`, `temp`, or an `ATTACH` alias. Table names the session is later
+    /// given, whether through [`Session::attach_by_name`] or
+    /// [`Session::diff`], resolve against that database.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use diesel::prelude::*;
+    /// use diesel_sqlite_session::SqliteSessionExt;
+    ///
+    /// let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    /// diesel::sql_query("ATTACH DATABASE ':memory:' AS side")
+    ///     .execute(&mut conn).unwrap();
+    /// diesel::sql_query("CREATE TABLE side.notes (id INTEGER PRIMARY KEY, body TEXT)")
+    ///     .execute(&mut conn).unwrap();
+    ///
+    /// let mut session = conn.create_session_on("side").unwrap();
+    /// session.attach_by_name("notes").unwrap();
+    ///
+    /// diesel::sql_query("INSERT INTO side.notes VALUES (1, 'draft')")
+    ///     .execute(&mut conn).unwrap();
+    ///
+    /// assert!(!session.changeset().unwrap().is_empty());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// - [`SessionError::InvalidDatabaseName`] if `database` contains a null
+    ///   byte.
+    /// - [`SessionError::UnknownDatabase`] if no database of that name is
+    ///   attached to this connection.
+    /// - [`SessionError::PreUpdateHookInstalled`] if a [`PreUpdateHook`] holds
+    ///   this connection's pre-update callback slot.
+    /// - [`SessionError::CreateFailed`] on any `SQLite` failure.
+    fn create_session_on(&mut self, database: &str) -> Result<Session, SessionError>;
 
     /// Apply a changeset to this connection.
     ///
@@ -169,6 +212,10 @@ pub trait SqliteSessionExt {
     /// connection, so a second `on_preupdate` while a guard is alive
     /// replaces the callback and silently retires the older guard.
     ///
+    /// The session extension needs the same slot, so this fails while a
+    /// [`Session`] is recording the connection. See the mutual exclusion
+    /// note on the pre-update module.
+    ///
     /// # Example
     ///
     /// ```
@@ -193,7 +240,8 @@ pub trait SqliteSessionExt {
     ///     PreUpdateOp::Delete => {
     ///         println!("delete rowid {}", event.old_rowid());
     ///     }
-    /// });
+    /// })
+    /// .unwrap();
     ///
     /// diesel::sql_query("INSERT INTO audit (note) VALUES ('hello')")
     ///     .execute(&mut conn)
@@ -202,7 +250,14 @@ pub trait SqliteSessionExt {
     /// // Drop the guard to detach the callback.
     /// drop(hook);
     /// ```
-    fn on_preupdate<F>(&mut self, hook: F) -> PreUpdateHook
+    ///
+    /// # Errors
+    ///
+    /// - [`PreUpdateError::SessionActive`] if a [`Session`] is recording this
+    ///   connection.
+    /// - [`PreUpdateError::Sqlite`] if `SQLite` could not record the hook
+    ///   against the connection.
+    fn on_preupdate<F>(&mut self, hook: F) -> Result<PreUpdateHook, PreUpdateError>
     where
         F: FnMut(PreUpdateEvent<'_>) + Send + 'static;
 
@@ -375,6 +430,11 @@ impl SqliteSessionExt for SqliteConnection {
     }
 
     #[inline]
+    fn create_session_on(&mut self, database: &str) -> Result<Session, SessionError> {
+        Session::new_on_database(self, database)
+    }
+
+    #[inline]
     fn apply_changeset<F>(&mut self, changeset: &[u8], on_conflict: F) -> Result<(), ApplyError>
     where
         F: Fn(ConflictType) -> ConflictAction,
@@ -391,7 +451,7 @@ impl SqliteSessionExt for SqliteConnection {
     }
 
     #[inline]
-    fn on_preupdate<F>(&mut self, hook: F) -> PreUpdateHook
+    fn on_preupdate<F>(&mut self, hook: F) -> Result<PreUpdateHook, PreUpdateError>
     where
         F: FnMut(PreUpdateEvent<'_>) + Send + 'static,
     {

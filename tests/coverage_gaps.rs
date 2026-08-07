@@ -479,18 +479,20 @@ fn preupdate_event_debug_and_value_debug_render() {
         .execute(&mut conn)
         .unwrap();
 
-    let _hook = conn.on_preupdate(move |event| {
-        let mut msgs = sink.lock();
-        msgs.push(format!("{event:?}"));
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            if let Ok(v) = event.new_value(1) {
-                msgs.push(format!("{v:?}"));
-                // Exercise the ColumnOutOfRange branch too.
-                let bad = u32::try_from(event.column_count()).unwrap() + 5;
-                assert!(event.new_value(bad).is_err());
+    let _hook = conn
+        .on_preupdate(move |event| {
+            let mut msgs = sink.lock();
+            msgs.push(format!("{event:?}"));
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                if let Ok(v) = event.new_value(1) {
+                    msgs.push(format!("{v:?}"));
+                    // Exercise the ColumnOutOfRange branch too.
+                    let bad = u32::try_from(event.column_count()).unwrap() + 5;
+                    assert!(event.new_value(bad).is_err());
+                }
             }
-        }
-    });
+        })
+        .unwrap();
 
     sql_query("INSERT INTO t (id, name) VALUES (1, 'hello')")
         .execute(&mut conn)
@@ -519,13 +521,15 @@ fn preupdate_value_as_bytes_returns_none_for_null() {
     sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, b BLOB)")
         .execute(&mut conn)
         .unwrap();
-    let _hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            let v: PreUpdateValue<'_> = event.new_value(1).unwrap();
-            assert!(matches!(v.column_type(), PreUpdateColumnType::Null));
-            *sink.lock() = Some(v.as_bytes().is_none());
-        }
-    });
+    let _hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                let v: PreUpdateValue<'_> = event.new_value(1).unwrap();
+                assert!(matches!(v.column_type(), PreUpdateColumnType::Null));
+                *sink.lock() = Some(v.as_bytes().is_none());
+            }
+        })
+        .unwrap();
 
     sql_query("INSERT INTO t (id, b) VALUES (1, NULL)")
         .execute(&mut conn)
@@ -541,15 +545,17 @@ fn preupdate_value_as_bytes_returns_empty_slice_for_zero_length_blob() {
     sql_query("CREATE TABLE t (id INTEGER PRIMARY KEY, b BLOB)")
         .execute(&mut conn)
         .unwrap();
-    let _hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            if let Ok(v) = event.new_value(1) {
-                if let Some(slice) = v.as_bytes() {
-                    *sink.lock() = Some(slice.len());
+    let _hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                if let Ok(v) = event.new_value(1) {
+                    if let Some(slice) = v.as_bytes() {
+                        *sink.lock() = Some(slice.len());
+                    }
                 }
             }
-        }
-    });
+        })
+        .unwrap();
 
     sql_query("INSERT INTO t (id, b) VALUES (1, x'')")
         .execute(&mut conn)

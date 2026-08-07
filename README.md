@@ -4,7 +4,7 @@
 [![codecov](https://codecov.io/gh/LucaCappelletti94/diesel-sqlite-session/graph/badge.svg)](https://codecov.io/gh/LucaCappelletti94/diesel-sqlite-session)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-`SQLite` [session extension](https://sqlite.org/sessionintro.html) support for Diesel. Track row-level `INSERT`, `UPDATE`, and `DELETE` on a `SqliteConnection`, emit changesets or patchsets, and apply them elsewhere with a conflict callback. Attach tables by Diesel table type or by runtime name. Runs on Linux, macOS, Windows, iOS, Android, and WebAssembly.
+`SQLite` [session extension](https://sqlite.org/sessionintro.html) support for Diesel. Track row-level `INSERT`, `UPDATE`, and `DELETE` on a `SqliteConnection`, emit changesets or patchsets, and apply them elsewhere with a conflict callback. Attach tables by Diesel table type or by runtime name. A session tracks `main` unless you name another database, so an `ATTACH`ed file is reachable too. Runs on Linux, macOS, Windows, iOS, Android, and WebAssembly.
 
 > **Note**: Support depends on Diesel's `with_raw_connection` (added in [diesel#4966](https://github.com/diesel-rs/diesel/pull/4966)). Since this is merged but not yet released, use Diesel from the upstream git repo.
 

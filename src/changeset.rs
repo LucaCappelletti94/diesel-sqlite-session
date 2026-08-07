@@ -203,6 +203,10 @@ pub enum ChangesetError {
     /// A database or schema name contained an interior null byte.
     #[error("changegroup schema name contains a null byte")]
     InvalidSchemaName,
+    /// No database of that name is attached to the connection passed to
+    /// [`Changegroup::set_schema`](crate::Changegroup::set_schema).
+    #[error("No database named {0:?} is attached to this connection")]
+    UnknownDatabase(String),
     /// `sqlite3rebaser_create` returned a non-`OK` code.
     #[error("SQLite failed to create rebaser: {0}")]
     RebaserCreateFailed(SqliteErrorCode),

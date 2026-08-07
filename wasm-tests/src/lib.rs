@@ -8,8 +8,8 @@ use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
     concat_changesets, invert_changeset, ApplyFlags, BlobError, BlobMode, Changegroup, ChangesetOp,
-    ChangesetReader, ChangesetRow, ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp,
-    Rebaser, SqliteSessionExt,
+    ChangesetReader, ChangesetRow, ConflictAction, ConflictType, PreUpdateColumnType,
+    PreUpdateError, PreUpdateOp, Rebaser, SessionError, SqliteSessionExt,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -344,15 +344,17 @@ async fn preupdate_insert_fires_hook_wasm() {
     let events: Arc<Mutex<Vec<(PreUpdateOp, String, String, i64, usize)>>> =
         Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
-    let hook = conn.on_preupdate(move |event| {
-        sink.lock().push((
-            event.op(),
-            event.database().to_owned(),
-            event.table().to_owned(),
-            event.new_rowid(),
-            event.column_count(),
-        ));
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            sink.lock().push((
+                event.op(),
+                event.database().to_owned(),
+                event.table().to_owned(),
+                event.new_rowid(),
+                event.column_count(),
+            ));
+        })
+        .unwrap();
     sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'w', 42)")
         .execute(&mut conn)
         .unwrap();
@@ -385,26 +387,28 @@ async fn preupdate_update_delivers_old_and_new_wasm() {
     }
     let snap: Arc<Mutex<Option<Snapshot>>> = Arc::new(Mutex::new(None));
     let sink = snap.clone();
-    let hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Update) {
-            let old_name = event
-                .old_value(1)
-                .ok()
-                .and_then(|v| v.as_text().map(str::to_owned));
-            let new_name = event
-                .new_value(1)
-                .ok()
-                .and_then(|v| v.as_text().map(str::to_owned));
-            let old_value = event.old_value(2).map(|v| v.as_i64()).unwrap_or(-1);
-            let new_value = event.new_value(2).map(|v| v.as_i64()).unwrap_or(-1);
-            *sink.lock() = Some(Snapshot {
-                old_name,
-                new_name,
-                old_value,
-                new_value,
-            });
-        }
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Update) {
+                let old_name = event
+                    .old_value(1)
+                    .ok()
+                    .and_then(|v| v.as_text().map(str::to_owned));
+                let new_name = event
+                    .new_value(1)
+                    .ok()
+                    .and_then(|v| v.as_text().map(str::to_owned));
+                let old_value = event.old_value(2).map(|v| v.as_i64()).unwrap_or(-1);
+                let new_value = event.new_value(2).map(|v| v.as_i64()).unwrap_or(-1);
+                *sink.lock() = Some(Snapshot {
+                    old_name,
+                    new_name,
+                    old_value,
+                    new_value,
+                });
+            }
+        })
+        .unwrap();
     sql_query("UPDATE test_items SET name = 'after', value = 2 WHERE id = 1")
         .execute(&mut conn)
         .unwrap();
@@ -426,14 +430,16 @@ async fn preupdate_column_type_matches_wasm() {
 
     let types: Arc<Mutex<Vec<PreUpdateColumnType>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = types.clone();
-    let hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            let mut buf = sink.lock();
-            for i in 0..u32::try_from(event.column_count()).unwrap() {
-                buf.push(event.new_value(i).unwrap().column_type());
+    let hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                let mut buf = sink.lock();
+                for i in 0..u32::try_from(event.column_count()).unwrap() {
+                    buf.push(event.new_value(i).unwrap().column_type());
+                }
             }
-        }
-    });
+        })
+        .unwrap();
     sql_query("INSERT INTO mixed_wasm (a, b, c, d, e) VALUES (7, 'hi', 3.5, x'DEADBEEF', NULL)")
         .execute(&mut conn)
         .unwrap();
@@ -459,9 +465,11 @@ async fn preupdate_dropping_guard_stops_callback_wasm() {
 
     let count = Arc::new(AtomicU32::new(0));
     let sink = count.clone();
-    let hook = conn.on_preupdate(move |_| {
-        sink.fetch_add(1, Ordering::SeqCst);
-    });
+    let hook = conn
+        .on_preupdate(move |_| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
     sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'a', 1)")
         .execute(&mut conn)
         .unwrap();
@@ -480,9 +488,11 @@ async fn preupdate_then_session_cutover_wasm() {
 
     let count = Arc::new(AtomicU32::new(0));
     let sink = count.clone();
-    let hook = conn.on_preupdate(move |_| {
-        sink.fetch_add(1, Ordering::SeqCst);
-    });
+    let hook = conn
+        .on_preupdate(move |_| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
     sql_query("INSERT INTO test_items (id, name, value) VALUES (1, 'x', 1)")
         .execute(&mut conn)
         .unwrap();
@@ -556,9 +566,11 @@ async fn blob_write_fires_preupdate_with_column_index_wasm() {
 
     let seen: Arc<Mutex<Vec<(PreUpdateOp, Option<u32>)>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = seen.clone();
-    let hook = conn.on_preupdate(move |event| {
-        sink.lock().push((event.op(), event.blob_write_column()));
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            sink.lock().push((event.op(), event.blob_write_column()));
+        })
+        .unwrap();
 
     let blob = conn
         .open_blob("main", "bw_wasm", "data", 1, BlobMode::ReadWrite)
@@ -1095,4 +1107,130 @@ async fn changegroup_add_change_folds_per_row_wasm() {
         )
         .unwrap();
     assert_eq!(count_rows(&mut replica), 2);
+}
+
+/// Sets up `side.notes` plus an empty `blank.notes` twin to diff against.
+fn setup_attached_notes(conn: &mut SqliteConnection) {
+    for statement in [
+        "ATTACH DATABASE ':memory:' AS side",
+        "ATTACH DATABASE ':memory:' AS blank",
+        "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)",
+        "CREATE TABLE side.notes (id INTEGER PRIMARY KEY, body TEXT)",
+        "CREATE TABLE blank.notes (id INTEGER PRIMARY KEY, body TEXT)",
+    ] {
+        sql_query(statement)
+            .execute(conn)
+            .expect("Failed to set up attached databases");
+    }
+}
+
+#[wasm_bindgen_test]
+async fn session_on_attached_database_records_live_writes_wasm() {
+    let mut conn = create_connection();
+    setup_attached_notes(&mut conn);
+
+    let mut session = conn.create_session_on("side").unwrap();
+    session.attach_all().unwrap();
+    sql_query("INSERT INTO notes VALUES (1, 'from-main')")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO side.notes VALUES (2, 'from-side')")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&changeset).expect("open reader");
+    let row = reader.next().expect("advance").expect("saw an insert row");
+    assert_eq!(row.op(), ChangesetOp::Insert);
+    assert_eq!(
+        row.new_value(1).unwrap().unwrap().as_text(),
+        Some("from-side")
+    );
+    assert!(reader.next().unwrap().is_none(), "main's row stays out");
+}
+
+#[wasm_bindgen_test]
+async fn session_on_attached_database_diffs_its_own_table_wasm() {
+    let mut conn = create_connection();
+    setup_attached_notes(&mut conn);
+    sql_query("INSERT INTO notes VALUES (9, 'from-main')")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO side.notes VALUES (1, 'from-side')")
+        .execute(&mut conn)
+        .unwrap();
+
+    let mut session = conn.create_session_on("side").unwrap();
+    session.attach_by_name("notes").unwrap();
+    session.diff("blank", "notes").unwrap();
+    let patchset = session.patchset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&patchset).expect("open reader");
+    let row = reader.next().expect("advance").expect("saw an insert row");
+    assert_eq!(
+        row.new_value(1).unwrap().unwrap().as_text(),
+        Some("from-side")
+    );
+    assert!(reader.next().unwrap().is_none(), "main's row stays out");
+}
+
+#[wasm_bindgen_test]
+async fn session_on_unattached_database_fails_at_construction_wasm() {
+    let mut conn = create_connection();
+
+    let err = conn.create_session_on("side").unwrap_err();
+    assert!(
+        matches!(&err, SessionError::UnknownDatabase(name) if name == "side"),
+        "{err:?}",
+    );
+}
+
+#[wasm_bindgen_test]
+async fn session_and_preupdate_hook_refuse_to_share_a_connection_wasm() {
+    let mut conn = create_connection();
+
+    let hook = conn.on_preupdate(|_| {}).unwrap();
+    let err = conn.create_session().unwrap_err();
+    assert!(
+        matches!(err, SessionError::PreUpdateHookInstalled),
+        "{err:?}"
+    );
+    drop(hook);
+
+    let session = conn.create_session().expect("the slot is free again");
+    let err = conn.on_preupdate(|_| {}).unwrap_err();
+    assert!(matches!(err, PreUpdateError::SessionActive), "{err:?}");
+    drop(session);
+
+    conn.on_preupdate(|_| {})
+        .expect("the slot is free once the session is gone");
+}
+
+#[wasm_bindgen_test]
+async fn session_opens_on_temp_before_any_temporary_table_exists_wasm() {
+    // The name check picks `sqlite3_txn_state` over `sqlite3_db_readonly`
+    // precisely because the latter rejects `temp` until a temporary table
+    // exists. The browser links a different build of SQLite, so pin it here
+    // too.
+    let mut conn = create_connection();
+
+    let mut session = conn.create_session_on("temp").expect("session on temp");
+    session.attach_all().unwrap();
+    sql_query("CREATE TEMPORARY TABLE scratch_wasm (id INTEGER PRIMARY KEY, body TEXT)")
+        .execute(&mut conn)
+        .unwrap();
+    sql_query("INSERT INTO scratch_wasm VALUES (1, 'jotting')")
+        .execute(&mut conn)
+        .unwrap();
+    let changeset = session.changeset().unwrap();
+    drop(session);
+
+    let mut reader = ChangesetReader::open(&changeset).expect("open reader");
+    let row = reader.next().expect("advance").expect("saw an insert row");
+    assert_eq!(
+        row.new_value(1).unwrap().unwrap().as_text(),
+        Some("jotting")
+    );
 }
