@@ -12,7 +12,7 @@ use std::sync::Arc;
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateOp, PreUpdateValue,
+    PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateOp, PreUpdateValue, SessionError,
     SqliteSessionExt,
 };
 use parking_lot::Mutex;
@@ -111,9 +111,11 @@ fn record_all(
 ) {
     let log: Arc<Mutex<Vec<CapturedEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = log.clone();
-    let hook = conn.on_preupdate(move |event| {
-        sink.lock().push(CapturedEvent::capture(&event));
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            sink.lock().push(CapturedEvent::capture(&event));
+        })
+        .unwrap();
     (log, hook)
 }
 
@@ -139,12 +141,14 @@ fn insert_fires_hook_with_new_rowid_and_new_values_only() {
     drop(hook);
     let old_error: Arc<Mutex<Option<PreUpdateError>>> = Arc::new(Mutex::new(None));
     let sink = old_error.clone();
-    let hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            let err = event.old_value(0).err();
-            *sink.lock() = err;
-        }
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                let err = event.old_value(0).err();
+                *sink.lock() = err;
+            }
+        })
+        .unwrap();
     sql_query("INSERT INTO items (id, name, quantity) VALUES (2, 'Sprocket', 7)")
         .execute(&mut conn)
         .unwrap();
@@ -236,15 +240,17 @@ fn delete_fires_hook_with_old_values_only() {
     let new_error: Arc<Mutex<Option<PreUpdateError>>> = Arc::new(Mutex::new(None));
     let events_sink = events.clone();
     let error_sink = new_error.clone();
-    let hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Delete) {
-            // Capture the negative shape of `new_value` on DELETE inside the
-            // callback frame, then record the event by value.
-            let err = event.new_value(0).err();
-            *error_sink.lock() = err;
-        }
-        events_sink.lock().push(CapturedEvent::capture(&event));
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Delete) {
+                // Capture the negative shape of `new_value` on DELETE inside the
+                // callback frame, then record the event by value.
+                let err = event.new_value(0).err();
+                *error_sink.lock() = err;
+            }
+            events_sink.lock().push(CapturedEvent::capture(&event));
+        })
+        .unwrap();
 
     sql_query("DELETE FROM items WHERE id = 1")
         .execute(&mut conn)
@@ -324,11 +330,13 @@ fn column_out_of_range_returns_column_out_of_range() {
 
     let captured: Arc<Mutex<Option<PreUpdateError>>> = Arc::new(Mutex::new(None));
     let sink = captured.clone();
-    let hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            *sink.lock() = event.new_value(9).err();
-        }
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                *sink.lock() = event.new_value(9).err();
+            }
+        })
+        .unwrap();
     sql_query("INSERT INTO tiny (a, b) VALUES (1, 2)")
         .execute(&mut conn)
         .unwrap();
@@ -353,9 +361,11 @@ fn dropping_the_guard_stops_the_callback() {
 
     let count = Arc::new(AtomicU32::new(0));
     let sink = count.clone();
-    let hook = conn.on_preupdate(move |_| {
-        sink.fetch_add(1, Ordering::SeqCst);
-    });
+    let hook = conn
+        .on_preupdate(move |_| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
     sql_query("INSERT INTO counted (v) VALUES (1)")
         .execute(&mut conn)
         .unwrap();
@@ -384,9 +394,11 @@ fn re_registering_replaces_the_previous_hook() {
 
     let a_count = Arc::new(AtomicU32::new(0));
     let a_sink = a_count.clone();
-    let _hook_a = conn.on_preupdate(move |_| {
-        a_sink.fetch_add(1, Ordering::SeqCst);
-    });
+    let _hook_a = conn
+        .on_preupdate(move |_| {
+            a_sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
     sql_query("INSERT INTO slots (v) VALUES (1)")
         .execute(&mut conn)
         .unwrap();
@@ -394,9 +406,11 @@ fn re_registering_replaces_the_previous_hook() {
 
     let b_count = Arc::new(AtomicU32::new(0));
     let b_sink = b_count.clone();
-    let hook_b = conn.on_preupdate(move |_| {
-        b_sink.fetch_add(1, Ordering::SeqCst);
-    });
+    let hook_b = conn
+        .on_preupdate(move |_| {
+            b_sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
     // Registering hook_b silently retires hook_a's closure. The stale
     // guard hook_a is now a no-op wrapper. `hook_a` stays in scope so it
     // drops AFTER hook_b (LIFO drop order) and its Drop finds nothing to do.
@@ -426,9 +440,11 @@ fn hook_panic_is_caught_and_dml_still_succeeds() {
         .execute(&mut conn)
         .unwrap();
 
-    let hook = conn.on_preupdate(|_| {
-        panic!("boom inside pre-update callback");
-    });
+    let hook = conn
+        .on_preupdate(|_| {
+            panic!("boom inside pre-update callback");
+        })
+        .unwrap();
 
     let result = sql_query("INSERT INTO brave (v) VALUES (1)").execute(&mut conn);
     assert!(
@@ -572,15 +588,17 @@ fn null_value_reports_is_null_and_null_type() {
     // methods borrow from the transient PreUpdateValue.
     let recorded: Arc<Mutex<Vec<(bool, PreUpdateColumnType)>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = recorded.clone();
-    let hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            let mut buf = sink.lock();
-            for i in 0..u32::try_from(event.column_count()).unwrap() {
-                let v = event.new_value(i).unwrap();
-                buf.push((v.is_null(), v.column_type()));
+    let hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                let mut buf = sink.lock();
+                for i in 0..u32::try_from(event.column_count()).unwrap() {
+                    let v = event.new_value(i).unwrap();
+                    buf.push((v.is_null(), v.column_type()));
+                }
             }
-        }
-    });
+        })
+        .unwrap();
     sql_query("INSERT INTO nulls (a, b) VALUES (NULL, 7)")
         .execute(&mut conn)
         .unwrap();
@@ -621,9 +639,11 @@ fn session_after_dropping_preupdate_hook_still_records_changes() {
     // Phase 1: use PreUpdateHook, then drop the guard.
     let count = Arc::new(AtomicU32::new(0));
     let sink = count.clone();
-    let hook = conn.on_preupdate(move |_| {
-        sink.fetch_add(1, Ordering::SeqCst);
-    });
+    let hook = conn
+        .on_preupdate(move |_| {
+            sink.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
     sql_query("INSERT INTO cutover (v) VALUES (1)")
         .execute(&mut conn)
         .unwrap();
@@ -656,6 +676,93 @@ fn session_after_dropping_preupdate_hook_still_records_changes() {
 }
 
 #[test]
+fn a_session_is_refused_while_a_preupdate_hook_is_installed() {
+    // Both share SQLite's single pre-update callback slot, and letting them
+    // overlap makes SQLite read a boxed Rust closure as an sqlite3_session.
+    let mut conn = fresh_connection();
+    let hook = conn.on_preupdate(|_| {}).unwrap();
+
+    let err = conn.create_session().unwrap_err();
+    assert!(
+        matches!(err, SessionError::PreUpdateHookInstalled),
+        "{err:?}",
+    );
+    let err = conn.create_session_on("main").unwrap_err();
+    assert!(
+        matches!(err, SessionError::PreUpdateHookInstalled),
+        "{err:?}",
+    );
+
+    drop(hook);
+    conn.create_session()
+        .expect("the slot is free once the guard is gone");
+}
+
+#[test]
+fn a_preupdate_hook_is_refused_while_a_session_is_alive() {
+    let mut conn = fresh_connection();
+    let session = conn.create_session().unwrap();
+
+    let err = conn.on_preupdate(|_| {}).unwrap_err();
+    assert!(matches!(err, PreUpdateError::SessionActive), "{err:?}");
+
+    drop(session);
+    conn.on_preupdate(|_| {})
+        .expect("the slot is free once the session is gone");
+}
+
+#[test]
+fn the_slot_stays_held_until_the_last_session_drops() {
+    // Several sessions on one connection are ordinary and SQLite links them,
+    // so the slot has to be counted rather than flagged.
+    let mut conn = fresh_connection();
+    let first = conn.create_session().unwrap();
+    let second = conn.create_session().unwrap();
+
+    drop(first);
+    let err = conn.on_preupdate(|_| {}).unwrap_err();
+    assert!(matches!(err, PreUpdateError::SessionActive), "{err:?}");
+
+    drop(second);
+    conn.on_preupdate(|_| {})
+        .expect("the last session released the slot");
+}
+
+#[test]
+fn the_slot_stays_held_until_the_last_hook_drops() {
+    let mut conn = fresh_connection();
+    let first = conn.on_preupdate(|_| {}).unwrap();
+    let second = conn.on_preupdate(|_| {}).unwrap();
+
+    drop(first);
+    let err = conn.create_session().unwrap_err();
+    assert!(
+        matches!(err, SessionError::PreUpdateHookInstalled),
+        "{err:?}",
+    );
+
+    drop(second);
+    conn.create_session()
+        .expect("the last guard released the slot");
+}
+
+#[test]
+fn a_session_dropped_on_another_thread_releases_the_slot() {
+    // `Session` is `Send` and its `Drop` needs no connection, so a release can
+    // land on a thread that does not hold the connection. That is why the slot
+    // counters are atomic.
+    let mut conn = fresh_connection();
+    let session = conn.create_session().unwrap();
+
+    std::thread::spawn(move || drop(session))
+        .join()
+        .expect("the worker dropped the session");
+
+    conn.on_preupdate(|_| {})
+        .expect("the slot came back from the other thread");
+}
+
+#[test]
 fn blob_write_reports_the_column_it_targets() {
     use diesel_sqlite_session::{BlobMode, SqliteSessionExt as _};
 
@@ -671,9 +778,11 @@ fn blob_write_reports_the_column_it_targets() {
 
     let events: Arc<Mutex<Vec<CapturedEvent>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
-    let hook = conn.on_preupdate(move |event| {
-        sink.lock().push(CapturedEvent::capture(&event));
-    });
+    let hook = conn
+        .on_preupdate(move |event| {
+            sink.lock().push(CapturedEvent::capture(&event));
+        })
+        .unwrap();
 
     // Writing through the incremental-BLOB API fires the pre-update hook once
     // per write, reporting op = Delete and blob_write_column = Some(column
@@ -788,9 +897,11 @@ fn panicking_hook_lets_insert_update_and_delete_all_succeed() {
         .execute(&mut conn)
         .unwrap();
 
-    let hook = conn.on_preupdate(|_| {
-        panic!("boom");
-    });
+    let hook = conn
+        .on_preupdate(|_| {
+            panic!("boom");
+        })
+        .unwrap();
 
     assert!(sql_query("INSERT INTO brave3 (id, v) VALUES (1, 10)")
         .execute(&mut conn)
@@ -822,15 +933,17 @@ fn preupdate_value_coerces_across_adjacent_types() {
 
     let captured: Arc<Mutex<Vec<(i64, f64)>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = captured.clone();
-    let hook = conn.on_preupdate(move |event| {
-        if matches!(event.op(), PreUpdateOp::Insert) {
-            let mut buf = sink.lock();
-            for i in 0..u32::try_from(event.column_count()).unwrap() {
-                let v = event.new_value(i).unwrap();
-                buf.push((v.as_i64(), v.as_f64()));
+    let hook = conn
+        .on_preupdate(move |event| {
+            if matches!(event.op(), PreUpdateOp::Insert) {
+                let mut buf = sink.lock();
+                for i in 0..u32::try_from(event.column_count()).unwrap() {
+                    let v = event.new_value(i).unwrap();
+                    buf.push((v.as_i64(), v.as_f64()));
+                }
             }
-        }
-    });
+        })
+        .unwrap();
     sql_query("INSERT INTO coerce (a, b, c, d) VALUES (42, 3.75, '17', '2.5')")
         .execute(&mut conn)
         .unwrap();

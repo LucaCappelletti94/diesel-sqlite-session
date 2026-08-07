@@ -310,6 +310,8 @@ impl Changegroup {
     ///
     /// - [`ChangesetError::InvalidSchemaName`] if `database` contains a null
     ///   byte.
+    /// - [`ChangesetError::UnknownDatabase`] if no database of that name is
+    ///   attached to `conn`.
     /// - [`ChangesetError::ChangegroupSchemaFailed`] if `SQLite` reports an
     ///   error.
     pub fn set_schema(
@@ -318,19 +320,25 @@ impl Changegroup {
         database: &str,
     ) -> Result<(), ChangesetError> {
         let c_name = CString::new(database).map_err(|_| ChangesetError::InvalidSchemaName)?;
-        // SAFETY: `self.ptr` is a live changegroup; `c_name` outlives the
+        // SAFETY: `self.ptr` is a live changegroup, and `c_name` outlives the
         // call from this stack frame.
-        let rc = unsafe {
+        unsafe {
             conn.with_raw_connection(|raw| {
-                sqlite3changegroup_schema(self.ptr, raw, c_name.as_ptr())
+                // `sqlite3changegroup_schema` copies the name without looking
+                // it up, so a name that answers to nothing is only reported
+                // later, by whichever `add` first needs a table shape.
+                if !crate::schema::database_exists(raw, &c_name) {
+                    return Err(ChangesetError::UnknownDatabase(database.to_owned()));
+                }
+                let rc = sqlite3changegroup_schema(self.ptr, raw, c_name.as_ptr());
+                if rc != SQLITE_OK {
+                    return Err(ChangesetError::ChangegroupSchemaFailed(
+                        SqliteErrorCode::from_error(rc),
+                    ));
+                }
+                Ok(())
             })
-        };
-        if rc != SQLITE_OK {
-            return Err(ChangesetError::ChangegroupSchemaFailed(
-                SqliteErrorCode::from_error(rc),
-            ));
         }
-        Ok(())
     }
 
     /// Fold `changeset` into the group.

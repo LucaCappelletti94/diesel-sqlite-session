@@ -18,10 +18,19 @@
 //! # Mutual exclusion with `Session`
 //!
 //! The session extension uses the same `sqlite3_preupdate_hook` slot for its
-//! own callback, so [`crate::Session`] and [`PreUpdateHook`] must not overlap
-//! on the same connection. Drop every `Session` before `on_preupdate`, and
-//! every `PreUpdateHook` before `create_session`. Both `install` and `Drop`
-//! refuse to reclaim any `pCtx` pointer they did not install themselves.
+//! own callback, so [`crate::Session`] and [`PreUpdateHook`] cannot share one
+//! connection. Overlapping would be undefined behaviour rather than a leak.
+//! `sqlite3session_create` links whatever sits in the slot into its own
+//! session list, and `sqlite3session_delete` walks the slot the same way, so
+//! `SQLite` would end up reading a `HookBox` as an `sqlite3_session`.
+//!
+//! Rather than leave that to the caller, whichever side arrives second is
+//! refused. [`crate::SqliteSessionExt::on_preupdate`] fails with
+//! [`PreUpdateError::SessionActive`] while a `Session` is alive, and
+//! `create_session` and `create_session_on` fail with
+//! [`SessionError::PreUpdateHookInstalled`](crate::SessionError::PreUpdateHookInstalled)
+//! while a hook guard is alive. Drop the one you hold and the other becomes
+//! available again.
 
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::marker::PhantomData;
@@ -39,6 +48,7 @@ use crate::ffi::{
     sqlite3_value_int64, sqlite3_value_type, SQLITE_BLOB, SQLITE_DELETE, SQLITE_FLOAT,
     SQLITE_INSERT, SQLITE_INTEGER, SQLITE_NULL, SQLITE_OK, SQLITE_TEXT, SQLITE_UPDATE,
 };
+use crate::slot::{self, SlotDenied};
 
 /// The row-modification operation that triggered a pre-update callback.
 ///
@@ -139,6 +149,10 @@ pub enum PreUpdateError {
     /// `SQLite` returned a non-`OK` result from a pre-update accessor.
     #[error("SQLite pre-update accessor failed: {0}")]
     Sqlite(SqliteErrorCode),
+    /// A [`crate::Session`] holds this connection's pre-update callback slot.
+    /// See the module-level note on mutual exclusion.
+    #[error("A session is recording this connection")]
+    SessionActive,
 }
 
 /// A single `sqlite3_value` snapshot returned by
@@ -404,9 +418,10 @@ struct HookBox {
 ///
 /// `SQLite` allows one pre-update hook per connection. A second
 /// [`SqliteSessionExt::on_preupdate`](crate::SqliteSessionExt::on_preupdate)
-/// while a guard is alive replaces the callback and drops the older closure;
-/// dropping the stale guard afterwards then removes the *new* hook, so keep
-/// the freshest guard around.
+/// while a guard is alive replaces the callback. The older guard's closure is
+/// then unreachable and is never freed, and dropping that stale guard
+/// afterwards removes the *new* hook and leaks its closure too. Keep only the
+/// freshest guard, and drop it before installing another.
 pub struct PreUpdateHook {
     db: *mut sqlite3,
     box_ptr: *mut HookBox,
@@ -414,35 +429,49 @@ pub struct PreUpdateHook {
 }
 
 impl PreUpdateHook {
-    /// Register `hook` as the connection's pre-update callback. If the slot
-    /// was already occupied (by an earlier hook or a live
-    /// [`crate::Session`]), the previous `pCtx` is leaked rather than
-    /// reclaimed as a foreign type; see the module-level "Mutual exclusion"
-    /// note.
-    pub(crate) fn install<F>(conn: &mut SqliteConnection, hook: F) -> Self
+    /// Register `hook` as the connection's pre-update callback.
+    ///
+    /// A second hook while a guard is alive is still allowed and still
+    /// replaces the callback. The previous `pCtx` is left in place rather
+    /// than reclaimed as a foreign type, which leaks it. A
+    /// [`crate::Session`] on the same connection is refused outright, see
+    /// the module-level note.
+    pub(crate) fn install<F>(conn: &mut SqliteConnection, hook: F) -> Result<Self, PreUpdateError>
     where
         F: FnMut(PreUpdateEvent<'_>) + Send + 'static,
     {
+        // SAFETY: `with_raw_connection` yields a live `sqlite3*`, and the
+        // handle stays open for as long as this guard, which is `!Send` and
+        // therefore cannot outlive the connection's thread.
+        let db = unsafe { conn.with_raw_connection(|raw| raw) };
+        // SAFETY: `db` is live and this thread is the one holding `conn`.
+        unsafe { slot::claim_hook(db) }.map_err(|denied| match denied {
+            SlotDenied::Occupied => PreUpdateError::SessionActive,
+            SlotDenied::OutOfMemory => PreUpdateError::Sqlite(SqliteErrorCode::NoMemory),
+        })?;
+
         let boxed = Box::new(HookBox {
             call: Box::new(hook),
         });
         let box_ptr = Box::into_raw(boxed);
-        // SAFETY: `with_raw_connection` yields a live `sqlite3*` for the
-        // callback duration. We deliberately ignore the previous `pCtx`
-        // returned by `sqlite3_preupdate_hook`: if it belongs to `Session`,
-        // reclaiming it as `Box<HookBox>` is UB. Leaking is a small memory
-        // cost that only bites callers who violate the mutual exclusion.
-        let db = unsafe {
-            conn.with_raw_connection(|raw| {
-                let _prev = sqlite3_preupdate_hook(raw, Some(trampoline), box_ptr.cast::<c_void>());
-                raw
-            })
-        };
-        Self {
+        // SAFETY: `db` is live and `box_ptr` stays valid until this guard
+        // drops. The previous `pCtx` is deliberately ignored: a `Session`
+        // cannot be there because the claim above refused, and an earlier
+        // hook owns its own box.
+        unsafe {
+            sqlite3_preupdate_hook(db, Some(trampoline), box_ptr.cast::<c_void>());
+        }
+        Ok(Self {
             db,
             box_ptr,
             _not_send_or_sync: PhantomData,
-        }
+        })
+    }
+}
+
+impl std::fmt::Debug for PreUpdateHook {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PreUpdateHook").finish_non_exhaustive()
     }
 }
 
@@ -459,9 +488,15 @@ impl Drop for PreUpdateHook {
             // SAFETY: leaked from `Box::into_raw` in `install`.
             unsafe { drop(Box::from_raw(self.box_ptr)) };
         }
-        // Otherwise the slot holds a foreign pointer (a later `PreUpdateHook`,
-        // or a `sqlite3_session*` stashed by the session extension).
-        // `Box::from_raw` on such a pointer is UB, so we leak `self.box_ptr`.
+        // Otherwise a later `PreUpdateHook` replaced us, so `self.box_ptr` is
+        // unreachable and stays leaked: reclaiming a `pCtx` we did not write
+        // would be undefined behaviour. A `Session` can never be there,
+        // because it could not have been created while this guard was alive.
+        //
+        // SAFETY: `self.db` is the handle `install` claimed against.
+        unsafe {
+            slot::release_hook(self.db);
+        }
     }
 }
 

@@ -202,6 +202,27 @@ fn changegroup_set_schema_rejects_null_byte_in_name() {
 }
 
 #[test]
+fn changegroup_set_schema_rejects_a_database_that_is_not_attached() {
+    // `sqlite3changegroup_schema` copies the name without looking it up, so
+    // without a check the mistake only surfaces at the next `add`, as a
+    // generic failure that does not name the argument that was wrong.
+    let mut conn = fresh_connection();
+    let mut group = Changegroup::new().unwrap();
+    let err = group.set_schema(&mut conn, "nope").unwrap_err();
+    assert!(
+        matches!(&err, ChangesetError::UnknownDatabase(name) if name == "nope"),
+        "{err:?}",
+    );
+
+    sql_query("ATTACH DATABASE ':memory:' AS side")
+        .execute(&mut conn)
+        .unwrap();
+    group
+        .set_schema(&mut conn, "side")
+        .expect("an attached database is accepted");
+}
+
+#[test]
 fn concat_matches_two_changegroup_add_calls() {
     // Given the same two changesets, concat and Changegroup ought to produce
     // functionally equivalent outputs (byte-equal is not guaranteed by SQLite,

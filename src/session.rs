@@ -9,7 +9,7 @@ use diesel::SqliteConnection;
 
 use crate::errors::{SessionError, SqliteErrorCode};
 use crate::ffi::{
-    sqlite3_free, sqlite3_session, sqlite3session_attach, sqlite3session_changeset,
+    sqlite3, sqlite3_free, sqlite3_session, sqlite3session_attach, sqlite3session_changeset,
     sqlite3session_changeset_size, sqlite3session_changeset_strm, sqlite3session_config,
     sqlite3session_create, sqlite3session_delete, sqlite3session_diff, sqlite3session_enable,
     sqlite3session_indirect, sqlite3session_isempty, sqlite3session_memory_used,
@@ -17,6 +17,7 @@ use crate::ffi::{
     sqlite3session_table_filter, SQLITE_OK, SQLITE_SESSION_CONFIG_STRMSIZE,
     SQLITE_SESSION_OBJCONFIG_ROWID, SQLITE_SESSION_OBJCONFIG_SIZE,
 };
+use crate::slot::{self, SlotDenied};
 
 /// A session that tracks changes on a Diesel `SQLite` connection and yields
 /// changesets or patchsets to apply on other databases.
@@ -138,6 +139,12 @@ use crate::ffi::{
 #[allow(clippy::struct_field_names)]
 pub struct Session {
     session: *mut sqlite3_session,
+    /// Needed by `Drop` to give the pre-update slot back. The connection
+    /// outlives the session, which the type's safety note already requires.
+    db: *mut sqlite3,
+    /// The database this session was opened on. `SQLite` keeps its own copy
+    /// private, so this is the only way to answer [`Session::database`].
+    database: Box<str>,
     /// Owned closure kept alive while the filter is registered. Double-boxed
     /// so `pCtx` gets a stable heap address that survives moves of `Session`.
     table_filter: Option<Box<FilterBox>>,
@@ -156,38 +163,109 @@ struct FilterBox {
 
 type SessionExportFn =
     unsafe extern "C" fn(*mut sqlite3_session, *mut c_int, *mut *mut c_void) -> c_int;
-const MAIN_DB_NAME: &std::ffi::CStr = c"main";
+const MAIN_DB_NAME: &CStr = c"main";
 
 impl Session {
     /// Constructor called by `SqliteSessionExt::create_session`. Tracks
-    /// changes on the "main" database.
-    ///
-    /// # Safety
-    ///
-    /// The returned session holds a raw pointer to the connection; drop it
-    /// before the connection.
+    /// changes on the `main` database.
     ///
     /// # Errors
     ///
-    /// [`SessionError::CreateFailed`] on any `SQLite` failure.
+    /// - [`SessionError::PreUpdateHookInstalled`] if a
+    ///   [`crate::PreUpdateHook`] holds the connection's pre-update callback
+    ///   slot.
+    /// - [`SessionError::CreateFailed`] on any `SQLite` failure.
     pub(crate) fn new_internal(conn: &mut SqliteConnection) -> Result<Self, SessionError> {
+        Self::open(conn, MAIN_DB_NAME)
+    }
+
+    /// Constructor called by `SqliteSessionExt::create_session_on`. Tracks
+    /// changes on `database`, which names `main`, `temp`, or an `ATTACH`
+    /// alias.
+    ///
+    /// # Errors
+    ///
+    /// - [`SessionError::InvalidDatabaseName`] if `database` contains a null
+    ///   byte.
+    /// - [`SessionError::UnknownDatabase`] if no database of that name is
+    ///   attached to `conn`.
+    /// - [`SessionError::PreUpdateHookInstalled`] if a
+    ///   [`crate::PreUpdateHook`] holds the connection's pre-update callback
+    ///   slot.
+    /// - [`SessionError::CreateFailed`] on any `SQLite` failure.
+    pub(crate) fn new_on_database(
+        conn: &mut SqliteConnection,
+        database: &str,
+    ) -> Result<Self, SessionError> {
+        let c_database = CString::new(database).map_err(|_| SessionError::InvalidDatabaseName)?;
+        Self::open(conn, &c_database)
+    }
+
+    /// Shared body of both constructors. The returned session holds a raw
+    /// pointer to the connection, so drop it first.
+    ///
+    /// `sqlite3session_create` copies the name without checking it, and a
+    /// name that no database answers to then captures nothing at all, so
+    /// reject it here rather than hand back a session that stays empty. It
+    /// also claims the connection's pre-update callback slot, so refuse when
+    /// a [`crate::PreUpdateHook`] already holds it.
+    fn open(conn: &mut SqliteConnection, database: &CStr) -> Result<Self, SessionError> {
         // SAFETY: `with_raw_connection` yields a live `sqlite3*` for the
-        // call, `MAIN_DB_NAME` is a static NUL-terminated C string.
-        let session = unsafe {
+        // call, and `database` is a NUL-terminated C string outliving it.
+        let (db, session) = unsafe {
             conn.with_raw_connection(|raw| {
+                // `sqlite3session_create` copies the name without looking it
+                // up, and a session on a name that answers to nothing records
+                // nothing at all, silently.
+                if !crate::schema::database_exists(raw, database) {
+                    return Err(SessionError::UnknownDatabase(
+                        database.to_string_lossy().into_owned(),
+                    ));
+                }
+                slot::claim_session(raw).map_err(|denied| match denied {
+                    SlotDenied::Occupied => SessionError::PreUpdateHookInstalled,
+                    SlotDenied::OutOfMemory => {
+                        SessionError::CreateFailed(SqliteErrorCode::NoMemory)
+                    }
+                })?;
                 let mut session: *mut sqlite3_session = ptr::null_mut();
-                let rc = sqlite3session_create(raw, MAIN_DB_NAME.as_ptr(), &mut session);
+                let rc = sqlite3session_create(raw, database.as_ptr(), &mut session);
                 if rc != SQLITE_OK {
+                    slot::release_session(raw);
                     return Err(SessionError::CreateFailed(SqliteErrorCode::from_error(rc)));
                 }
-                Ok(session)
+                Ok((raw, session))
             })
         }?;
 
         Ok(Self {
             session,
+            db,
+            database: database.to_string_lossy().into_owned().into_boxed_str(),
             table_filter: None,
         })
+    }
+
+    /// The database this session records, as passed to
+    /// [`create_session_on`](crate::SqliteSessionExt::create_session_on), or
+    /// `main` for a session from
+    /// [`create_session`](crate::SqliteSessionExt::create_session).
+    ///
+    /// ```
+    /// use diesel::prelude::*;
+    /// use diesel_sqlite_session::SqliteSessionExt;
+    ///
+    /// let mut conn = SqliteConnection::establish(":memory:").unwrap();
+    /// diesel::sql_query("ATTACH DATABASE ':memory:' AS side")
+    ///     .execute(&mut conn).unwrap();
+    ///
+    /// assert_eq!(conn.create_session().unwrap().database(), "main");
+    /// assert_eq!(conn.create_session_on("side").unwrap().database(), "side");
+    /// ```
+    #[inline]
+    #[must_use]
+    pub fn database(&self) -> &str {
+        &self.database
     }
 
     /// Attach a table using a Diesel table type.
@@ -373,17 +451,19 @@ impl Session {
     }
 
     /// Populate this session with the delta between `table` in
-    /// `from_database` and the same-named table on the connection's own
-    /// database (`sqlite3session_diff`). The filter installed by
+    /// `from_database` and the same-named table in the database this session
+    /// was opened on (`sqlite3session_diff`). The filter installed by
     /// [`set_table_filter`](Self::set_table_filter), if any, is consulted.
     ///
     /// # Errors
     ///
-    /// - [`SessionError::InvalidTableName`] if either name contains a null byte.
+    /// - [`SessionError::InvalidDatabaseName`] if `from_database` contains a
+    ///   null byte.
+    /// - [`SessionError::InvalidTableName`] if `table` contains a null byte.
     /// - [`SessionError::DiffFailed`] on any `SQLite`-reported error, carrying
     ///   any message `SQLite` wrote into `pzErrMsg`.
     pub fn diff(&mut self, from_database: &str, table: &str) -> Result<(), SessionError> {
-        let c_from = CString::new(from_database).map_err(|_| SessionError::InvalidTableName)?;
+        let c_from = CString::new(from_database).map_err(|_| SessionError::InvalidDatabaseName)?;
         let c_table = CString::new(table).map_err(|_| SessionError::InvalidTableName)?;
         let mut err_msg: *mut c_char = ptr::null_mut();
         // SAFETY: `self.session` is a live handle, both `CString`s outlive the
@@ -571,6 +651,17 @@ impl Session {
     }
 }
 
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("database", &self.database)
+            .field("is_empty", &self.is_empty())
+            .field("is_indirect", &self.is_indirect())
+            .field("has_table_filter", &self.table_filter.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         // Unhook the filter first so no callback fires against a half-dead
@@ -583,6 +674,11 @@ impl Drop for Session {
         // `sqlite3session_delete`.
         unsafe {
             sqlite3session_delete(self.session);
+        }
+        // SAFETY: `self.db` is the handle `open` claimed against, and the
+        // connection outlives the session per this type's safety note.
+        unsafe {
+            slot::release_session(self.db);
         }
         // `self.table_filter` drops after this method returns.
     }
