@@ -47,7 +47,7 @@ fn make_insert_changeset(rows: &[(i64, i64)]) -> Vec<u8> {
 fn invert_flips_insert_into_delete_and_round_trips_via_apply() {
     let bytes = make_insert_changeset(&[(1, 10), (2, 20)]);
     let inverted = invert_changeset(&bytes).expect("invert succeeds");
-    assert!(!inverted.is_empty());
+    assert_ne!(inverted, [] as [u8; 0]);
 
     // Iterate the inverted bytes: both rows must show up as DELETE ops.
     let mut reader = ChangesetReader::open(&inverted).expect("open inverted");
@@ -115,7 +115,7 @@ fn changegroup_aggregates_multiple_changesets() {
     group.add(&make_insert_changeset(&[(2, 20)])).unwrap();
     group.add(&make_insert_changeset(&[(3, 30)])).unwrap();
     let merged = group.output().expect("output succeeds");
-    assert!(!merged.is_empty());
+    assert_ne!(merged, [] as [u8; 0]);
 
     let mut replica = fresh_connection();
     create_items(&mut replica);
@@ -190,7 +190,7 @@ fn changegroup_set_schema_binds_a_database() {
     // Adding a rowid-table changeset must still work with a schema attached.
     group.add(&make_insert_changeset(&[(1, 10)])).unwrap();
     let merged = group.output().unwrap();
-    assert!(!merged.is_empty());
+    assert_ne!(merged, [] as [u8; 0]);
 }
 
 #[test]

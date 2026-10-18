@@ -77,7 +77,7 @@ fn session_patchset_strm_writes_a_nonempty_buffer() {
 
     let mut streamed = Vec::new();
     session.patchset_strm(&mut streamed).unwrap();
-    assert!(!streamed.is_empty());
+    assert_ne!(streamed, [] as [u8; 0]);
 }
 
 #[test]
@@ -198,7 +198,7 @@ fn apply_changeset_strm_with_applies_the_streamed_bytes() {
             |_| ConflictAction::Abort,
         )
         .expect("apply_changeset_strm_with succeeds");
-    assert!(outcome.rebase.is_empty());
+    assert_eq!(outcome.rebase, [] as [u8; 0]);
     assert_eq!(count_items(&mut replica), 2);
 }
 

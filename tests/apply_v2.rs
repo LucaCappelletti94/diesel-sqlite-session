@@ -339,7 +339,7 @@ fn combined_flags_invert_and_ignorenoop_apply_cleanly() {
             |_| ConflictAction::Abort,
         )
         .expect("apply succeeds under combined flags");
-    assert!(outcome.rebase.is_empty());
+    assert_eq!(outcome.rebase, [] as [u8; 0]);
     assert_eq!(count_rows(&mut replica, "combined"), 0);
 }
 
@@ -355,7 +355,7 @@ fn empty_changeset_is_a_no_op() {
             |_| ConflictAction::Abort,
         )
         .expect("empty changeset is a no-op");
-    assert!(outcome.rebase.is_empty());
+    assert_eq!(outcome.rebase, [] as [u8; 0]);
     assert_eq!(count_rows(&mut replica, "idle"), 0);
 }
 

@@ -172,7 +172,7 @@ fn insert_fires_hook_with_new_rowid_and_new_values_only() {
             CapturedValue::Integer(42),
         ],
     );
-    assert!(event.old_values.is_empty());
+    assert_eq!(event.old_values, [] as [CapturedValue; 0]);
 
     let captured_err = old_error.lock().take();
     assert!(
@@ -278,7 +278,7 @@ fn delete_fires_hook_with_old_values_only() {
             CapturedValue::Integer(99),
         ],
     );
-    assert!(event.new_values.is_empty());
+    assert_eq!(event.new_values, [] as [CapturedValue; 0]);
 
     let captured = new_error.lock().take();
     assert!(

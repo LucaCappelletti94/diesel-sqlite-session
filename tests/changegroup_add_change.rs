@@ -46,7 +46,7 @@ fn add_change_folds_selected_rows() {
     }
     let out = group.output().unwrap();
     drop(reader);
-    assert!(!out.is_empty());
+    assert_ne!(out, [] as [u8; 0]);
 
     // Apply the folded changeset to a fresh replica and confirm only the
     // even-id rows landed.
