@@ -79,7 +79,9 @@ Full API reference and runnable examples for every method live on [docs.rs](http
 | Windows ARM64 | `libsqlite3-sys` (bundled) | Supported, link/build checked in CI |
 | iOS (simulator + device build) | `libsqlite3-sys` (bundled) | Supported, simulator runtime-tested in CI |
 | Android (emulator + target builds) | `libsqlite3-sys` (bundled) | Supported, emulator runtime-tested in CI |
-| WebAssembly | `sqlite-wasm-rs` | Supported, tested in CI |
+| WebAssembly | `sqlite-wasm-rs` 0.5 or 0.6 | Supported, tested in CI against both |
+
+On `wasm32-unknown-unknown` the crate enables no `sqlite-wasm-rs` feature. With 0.6 a browser application enables `wasm-bindgen` on its own `sqlite-wasm-rs` dependency or supplies the host hooks itself, while 0.5 always carries that glue.
 
 ## Benchmarks
 
