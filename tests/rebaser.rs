@@ -236,8 +236,8 @@ fn configure_can_be_called_multiple_times() {
         )
         .unwrap()
         .rebase;
-    assert!(!rebase_first.is_empty());
-    assert!(!rebase_second.is_empty());
+    assert_ne!(rebase_first, [] as [u8; 0]);
+    assert_ne!(rebase_second, [] as [u8; 0]);
 
     let mut peer_a_rebaser = Rebaser::new().unwrap();
     peer_a_rebaser.configure(&rebase_first).unwrap();

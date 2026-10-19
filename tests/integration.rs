@@ -131,7 +131,7 @@ fn test_full_replication_workflow() {
 
     // Generate patchset
     let patchset = session.patchset().unwrap();
-    assert!(!patchset.is_empty());
+    assert_ne!(patchset, [] as [u8; 0]);
 
     // Replica database
     let mut replica = setup_connection();
@@ -323,8 +323,8 @@ fn test_changeset_vs_patchset() {
     let patchset = session.patchset().unwrap();
 
     // Both should be non-empty
-    assert!(!changeset.is_empty());
-    assert!(!patchset.is_empty());
+    assert_ne!(changeset, [] as [u8; 0]);
+    assert_ne!(patchset, [] as [u8; 0]);
 
     // Changeset typically contains more data (old values)
     // This isn't always true for INSERTs, but generally holds for UPDATEs
@@ -645,7 +645,7 @@ fn test_large_batch_changes() {
         .unwrap();
 
     let patchset = session.patchset().unwrap();
-    assert!(!patchset.is_empty());
+    assert_ne!(patchset, [] as [u8; 0]);
 
     let mut replica = setup_connection();
     replica
@@ -674,8 +674,8 @@ fn test_empty_session_produces_empty_output() {
     let changeset = session.changeset().unwrap();
     let patchset = session.patchset().unwrap();
 
-    assert!(changeset.is_empty());
-    assert!(patchset.is_empty());
+    assert_eq!(changeset, [] as [u8; 0]);
+    assert_eq!(patchset, [] as [u8; 0]);
 }
 
 #[test]
@@ -790,8 +790,8 @@ fn two_sessions_on_one_connection_track_disjoint_tables() {
     drop(dogs_session);
     drop(cats_session);
 
-    assert!(!cats_changeset.is_empty());
-    assert!(!dogs_changeset.is_empty());
+    assert_ne!(cats_changeset, [] as [u8; 0]);
+    assert_ne!(dogs_changeset, [] as [u8; 0]);
 
     // Apply each changeset to its own replica: `cats_changeset` must NOT
     // materialize any `dogs` rows and vice versa.

@@ -37,12 +37,15 @@ libsqlite3-sys = { version = ">=0.37, <0.39", features = ["bundled", "session"] 
 
 # WASM targets: use sqlite-wasm-rs
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
-sqlite-wasm-rs = "0.5"
+sqlite-wasm-rs = { version = ">=0.5, <0.7", default-features = false }
 
 [dev-dependencies]
 diesel = { git = "https://github.com/diesel-rs/diesel", features = ["sqlite"] }
 criterion = { version = "0.8.2", features = ["html_reports"] }
-rusqlite = { version = "0.40", features = ["bundled", "session", "buildtime_bindgen"] }
+# rusqlite's default `ffi-sqlite-wasm-rs` feature and its `buildtime_bindgen`
+# feature both put `sqlite-wasm-rs` 0.5 in the graph, which collides with 0.6
+# on `links = "wsqlite3"`. `session` still enables bindgen in libsqlite3-sys.
+rusqlite = { version = "0.40", default-features = false, features = ["bundled", "cache", "session"] }
 parking_lot = "0.12"
 
 [[bench]]

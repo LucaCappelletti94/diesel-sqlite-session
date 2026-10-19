@@ -76,16 +76,39 @@ jobs:
       - name: Check benchmarks compile
         run: cargo test --benches --no-run
 
-  # WASM tests
+  # WASM tests, against both `sqlite-wasm-rs` releases the crate accepts
   wasm:
-    name: WASM Tests
+    name: WASM Tests (sqlite-wasm-rs ${{ matrix.sqlite-wasm-rs }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        sqlite-wasm-rs: ["0.6", "0.5"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: sqlite-wasm-rs-${{ matrix.sqlite-wasm-rs }}
+
+      # 0.5 has no `wasm-bindgen` feature, and Cargo resolves the lockfile with
+      # every workspace feature enabled, so no committed manifest accepts both
+      # releases. The test crates take 0.5 here instead.
+      - name: Move the wasm test crates to sqlite-wasm-rs 0.5
+        if: matrix.sqlite-wasm-rs == '0.5'
+        run: |
+          cargo remove -p diesel-sqlite-session-wasm-tests sqlite-wasm-rs
+          cargo remove -p diesel-sqlite-session-wasm-bench sqlite-wasm-rs
+          cargo add -p diesel-sqlite-session-wasm-tests sqlite-wasm-rs@0.5
+          cargo add -p diesel-sqlite-session-wasm-bench sqlite-wasm-rs@0.5
+
+      - name: Confirm the resolved sqlite-wasm-rs release
+        run: |
+          cargo tree -p diesel-sqlite-session --target wasm32-unknown-unknown \
+            -i sqlite-wasm-rs --depth 0 \
+            | tee /dev/stderr | grep -q "^sqlite-wasm-rs v${{ matrix.sqlite-wasm-rs }}\."
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -99,9 +122,7 @@ jobs:
 
       # ChromeDriver resolves the runner's preinstalled `google-chrome` ahead of
       # the Chrome for Testing build on `PATH`, and the resulting version
-      # mismatch fails session creation. wasm-bindgen 0.2.121 only reads
-      # `sessionId` from that reply, so the failure surfaces as a bare
-      # `http status: 404` on the next request. Name the binary explicitly.
+      # mismatch fails session creation. Name the binary explicitly.
       - name: Pin the browser binary for webdriver
         run: |
           printf '{"goog:chromeOptions":{"binary":"%s"}}\n' \

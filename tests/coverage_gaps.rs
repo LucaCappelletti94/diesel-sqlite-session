@@ -695,7 +695,7 @@ fn apply_changeset_v3_with_empty_input_returns_empty_outcome() {
             |_| ConflictAction::Abort,
         )
         .unwrap();
-    assert!(outcome.rebase.is_empty());
+    assert_eq!(outcome.rebase, [] as [u8; 0]);
 }
 
 #[test]
