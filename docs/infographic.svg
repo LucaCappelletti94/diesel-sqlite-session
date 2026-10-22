@@ -436,6 +436,6 @@
   <!-- Footer -->
   <g transform="translate(0, 1090)">
     <rect width="900" height="30" fill="#f1f5f9"/>
-    <text x="450" y="19" text-anchor="middle" font-size="9" fill="#94a3b8">diesel-sqlite-session | MIT License | github.com/LucaCappelletti94/diesel-sqlite-session</text>
+    <text x="450" y="19" text-anchor="middle" font-size="9" fill="#94a3b8">diesel-sqlite-session | MIT License | github.com/connetto-rs/diesel-sqlite-session</text>
   </g>
 </svg>
