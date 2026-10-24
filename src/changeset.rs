@@ -43,15 +43,14 @@ use std::ptr;
 
 use thiserror::Error;
 
+use crate::column_type::ColumnType;
 use crate::errors::SqliteErrorCode;
 use crate::ffi::{
-    sqlite3_changeset_iter, sqlite3_value, sqlite3_value_blob, sqlite3_value_bytes,
-    sqlite3_value_double, sqlite3_value_int64, sqlite3_value_type, sqlite3changeset_finalize,
-    sqlite3changeset_new, sqlite3changeset_next, sqlite3changeset_old, sqlite3changeset_op,
-    sqlite3changeset_pk, sqlite3changeset_start, sqlite3changeset_start_strm,
-    sqlite3changeset_start_v2, sqlite3changeset_start_v2_strm, SQLITE_BLOB, SQLITE_DELETE,
-    SQLITE_DONE, SQLITE_FLOAT, SQLITE_INSERT, SQLITE_INTEGER, SQLITE_NULL, SQLITE_OK, SQLITE_ROW,
-    SQLITE_TEXT, SQLITE_UPDATE,
+    sqlite3_changeset_iter, sqlite3_value, sqlite3_value_double, sqlite3_value_int64,
+    sqlite3_value_type, sqlite3changeset_finalize, sqlite3changeset_new, sqlite3changeset_next,
+    sqlite3changeset_old, sqlite3changeset_op, sqlite3changeset_pk, sqlite3changeset_start,
+    sqlite3changeset_start_strm, sqlite3changeset_start_v2, sqlite3changeset_start_v2_strm,
+    value_bytes, SQLITE_DELETE, SQLITE_DONE, SQLITE_INSERT, SQLITE_OK, SQLITE_ROW, SQLITE_UPDATE,
 };
 
 /// `SQLITE_CHANGESETSTART_INVERT`, hard-coded because older `libsqlite3-sys`
@@ -95,34 +94,6 @@ impl ChangesetOp {
     #[must_use]
     pub const fn to_raw(self) -> i32 {
         self as i32
-    }
-}
-
-/// Dynamic type of a value read from a changeset row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(i32)]
-pub enum ChangesetColumnType {
-    /// 64-bit signed integer.
-    Integer = SQLITE_INTEGER,
-    /// IEEE 754 double.
-    Float = SQLITE_FLOAT,
-    /// UTF-8 text.
-    Text = SQLITE_TEXT,
-    /// Raw byte string.
-    Blob = SQLITE_BLOB,
-    /// `NULL`.
-    Null = SQLITE_NULL,
-}
-
-impl ChangesetColumnType {
-    fn from_raw(code: i32) -> Self {
-        match code {
-            SQLITE_INTEGER => Self::Integer,
-            SQLITE_FLOAT => Self::Float,
-            SQLITE_TEXT => Self::Text,
-            SQLITE_BLOB => Self::Blob,
-            _ => Self::Null,
-        }
     }
 }
 
@@ -250,17 +221,17 @@ impl<'a> ChangesetValue<'a> {
 
     /// Dynamic storage class reported by `sqlite3_value_type`.
     #[must_use]
-    pub fn column_type(&self) -> ChangesetColumnType {
+    pub fn column_type(&self) -> ColumnType {
         // SAFETY: `self.value` is a live `sqlite3_value*` valid for the
         // enclosing iterator position.
         let ty = unsafe { sqlite3_value_type(self.value) };
-        ChangesetColumnType::from_raw(ty)
+        ColumnType::from_raw(ty)
     }
 
     /// True iff the column is `NULL`.
     #[must_use]
     pub fn is_null(&self) -> bool {
-        self.column_type() == ChangesetColumnType::Null
+        self.column_type() == ColumnType::Null
     }
 
     /// Read the value as an `i64` (`sqlite3_value_int64`).
@@ -290,23 +261,10 @@ impl<'a> ChangesetValue<'a> {
         if self.is_null() {
             return None;
         }
-        // SAFETY: value is live and non-NULL.
-        let len = unsafe { sqlite3_value_bytes(self.value) };
-        let Ok(len) = usize::try_from(len) else {
-            return None;
-        };
-        if len == 0 {
-            return Some(&[]);
-        }
-        // SAFETY: `sqlite3_value_blob` returns a non-null pointer to `len`
-        // bytes readable for the current iterator position.
-        let ptr = unsafe { sqlite3_value_blob(self.value) };
-        if ptr.is_null() {
-            return None;
-        }
-        // SAFETY: length matches the value the SQLite side reports.
-        let slice = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
-        Some(slice)
+        // SAFETY: a `ChangesetValue<'a>` wraps a value `SQLite` keeps alive and
+        // unmodified for `'a`, the current iterator position, and NULL is ruled
+        // out above.
+        unsafe { value_bytes(self.value) }
     }
 }
 
@@ -716,7 +674,7 @@ impl std::fmt::Debug for ChangesetRow<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChangesetColumnType, ChangesetError, ChangesetOp};
+    use super::{ChangesetError, ChangesetOp};
 
     #[test]
     fn changeset_op_from_raw_roundtrips() {
@@ -729,34 +687,6 @@ mod tests {
         }
         assert_eq!(ChangesetOp::from_raw(0), None);
         assert_eq!(ChangesetOp::from_raw(999), None);
-    }
-
-    #[test]
-    fn changeset_column_type_from_raw_falls_back_to_null() {
-        assert_eq!(
-            ChangesetColumnType::from_raw(super::SQLITE_INTEGER),
-            ChangesetColumnType::Integer,
-        );
-        assert_eq!(
-            ChangesetColumnType::from_raw(super::SQLITE_FLOAT),
-            ChangesetColumnType::Float,
-        );
-        assert_eq!(
-            ChangesetColumnType::from_raw(super::SQLITE_TEXT),
-            ChangesetColumnType::Text,
-        );
-        assert_eq!(
-            ChangesetColumnType::from_raw(super::SQLITE_BLOB),
-            ChangesetColumnType::Blob,
-        );
-        assert_eq!(
-            ChangesetColumnType::from_raw(super::SQLITE_NULL),
-            ChangesetColumnType::Null,
-        );
-        assert_eq!(
-            ChangesetColumnType::from_raw(-42),
-            ChangesetColumnType::Null,
-        );
     }
 
     #[test]

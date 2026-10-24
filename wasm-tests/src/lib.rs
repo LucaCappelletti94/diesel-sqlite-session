@@ -8,13 +8,18 @@ use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
     concat_changesets, invert_changeset, ApplyFlags, BlobError, BlobMode, Changegroup, ChangesetOp,
-    ChangesetReader, ChangesetRow, ConflictAction, ConflictType, PreUpdateColumnType,
-    PreUpdateError, PreUpdateOp, Rebaser, SessionError, SqliteSessionExt,
+    ChangesetReader, ChangesetRow, ColumnType, ConflictAction, ConflictType, PreUpdateError,
+    PreUpdateOp, Rebaser, SessionError, SqliteSessionExt,
 };
 use parking_lot::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use wasm_bindgen_test::*;
+
+#[path = "../../tests/support/scenarios.rs"]
+mod scenarios;
+
+use scenarios::assert_unattached_database_is_refused;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -428,7 +433,7 @@ async fn preupdate_column_type_matches_wasm() {
         .execute(&mut conn)
         .unwrap();
 
-    let types: Arc<Mutex<Vec<PreUpdateColumnType>>> = Arc::new(Mutex::new(Vec::new()));
+    let types: Arc<Mutex<Vec<ColumnType>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = types.clone();
     let hook = conn
         .on_preupdate(move |event| {
@@ -449,11 +454,11 @@ async fn preupdate_column_type_matches_wasm() {
     assert_eq!(
         observed,
         vec![
-            PreUpdateColumnType::Integer,
-            PreUpdateColumnType::Text,
-            PreUpdateColumnType::Float,
-            PreUpdateColumnType::Blob,
-            PreUpdateColumnType::Null,
+            ColumnType::Integer,
+            ColumnType::Text,
+            ColumnType::Float,
+            ColumnType::Blob,
+            ColumnType::Null,
         ],
     );
 }
@@ -1178,13 +1183,7 @@ async fn session_on_attached_database_diffs_its_own_table_wasm() {
 
 #[wasm_bindgen_test]
 async fn session_on_unattached_database_fails_at_construction_wasm() {
-    let mut conn = create_connection();
-
-    let err = conn.create_session_on("side").unwrap_err();
-    assert!(
-        matches!(&err, SessionError::UnknownDatabase(name) if name == "side"),
-        "{err:?}",
-    );
+    assert_unattached_database_is_refused(&mut create_connection());
 }
 
 #[wasm_bindgen_test]

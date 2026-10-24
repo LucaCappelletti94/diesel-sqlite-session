@@ -12,7 +12,7 @@ use std::sync::Arc;
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateOp, PreUpdateValue, SessionError,
+    ColumnType, PreUpdateError, PreUpdateEvent, PreUpdateOp, PreUpdateValue, SessionError,
     SqliteSessionExt,
 };
 use parking_lot::Mutex;
@@ -32,11 +32,11 @@ enum CapturedValue {
 impl CapturedValue {
     fn capture(v: &PreUpdateValue<'_>) -> Self {
         match v.column_type() {
-            PreUpdateColumnType::Integer => Self::Integer(v.as_i64()),
-            PreUpdateColumnType::Float => Self::Float(v.as_f64()),
-            PreUpdateColumnType::Text => Self::Text(v.as_text().unwrap_or_default().to_owned()),
-            PreUpdateColumnType::Blob => Self::Blob(v.as_bytes().unwrap_or_default().to_vec()),
-            PreUpdateColumnType::Null => Self::Null,
+            ColumnType::Integer => Self::Integer(v.as_i64()),
+            ColumnType::Float => Self::Float(v.as_f64()),
+            ColumnType::Text => Self::Text(v.as_text().unwrap_or_default().to_owned()),
+            ColumnType::Blob => Self::Blob(v.as_bytes().unwrap_or_default().to_vec()),
+            ColumnType::Null => Self::Null,
         }
     }
 }
@@ -586,7 +586,7 @@ fn null_value_reports_is_null_and_null_type() {
 
     // Capture is_null and column_type inside the callback frame, since those
     // methods borrow from the transient PreUpdateValue.
-    let recorded: Arc<Mutex<Vec<(bool, PreUpdateColumnType)>>> = Arc::new(Mutex::new(Vec::new()));
+    let recorded: Arc<Mutex<Vec<(bool, ColumnType)>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = recorded.clone();
     let hook = conn
         .on_preupdate(move |event| {
@@ -606,8 +606,8 @@ fn null_value_reports_is_null_and_null_type() {
 
     let observed = recorded.lock().clone();
     assert_eq!(observed.len(), 2);
-    assert_eq!(observed[0], (true, PreUpdateColumnType::Null));
-    assert_eq!(observed[1], (false, PreUpdateColumnType::Integer));
+    assert_eq!(observed[0], (true, ColumnType::Null));
+    assert_eq!(observed[1], (false, ColumnType::Integer));
 }
 
 #[test]

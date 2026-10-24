@@ -12,8 +12,12 @@
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    ChangesetColumnType, ChangesetOp, ChangesetReader, SessionError, SqliteSessionExt,
+    ChangesetOp, ChangesetReader, ColumnType, SessionError, SqliteSessionExt,
 };
+
+mod support;
+
+use support::scenarios::assert_unattached_database_is_refused;
 
 fn fresh_connection() -> SqliteConnection {
     SqliteConnection::establish(":memory:").expect("open in-memory database")
@@ -40,7 +44,7 @@ fn texts(changes: &[u8]) -> Vec<String> {
             let Some(value) = row.new_value(index).expect("read new value") else {
                 continue;
             };
-            if value.column_type() == ChangesetColumnType::Text {
+            if value.column_type() == ColumnType::Text {
                 found.push(value.as_text().expect("text column decodes").to_owned());
             }
         }
@@ -235,13 +239,7 @@ fn detaching_the_database_under_a_live_session_reports_errors() {
 
 #[test]
 fn a_session_on_a_database_that_is_not_attached_fails_at_construction() {
-    let mut conn = fresh_connection();
-
-    let err = conn.create_session_on("side").unwrap_err();
-    assert!(
-        matches!(&err, SessionError::UnknownDatabase(name) if name == "side"),
-        "{err:?}",
-    );
+    assert_unattached_database_is_refused(&mut fresh_connection());
 }
 
 #[test]

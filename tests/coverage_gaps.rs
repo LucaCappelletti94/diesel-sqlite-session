@@ -8,9 +8,8 @@ use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
     concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm, ApplyError,
-    ApplyFlags, BlobMode, Changegroup, ChangesetError, ChangesetOp, ChangesetReader,
-    ConflictAction, ConflictType, PreUpdateColumnType, PreUpdateOp, PreUpdateValue, Rebaser,
-    SqliteSessionExt,
+    ApplyFlags, BlobMode, Changegroup, ChangesetError, ChangesetOp, ChangesetReader, ColumnType,
+    ConflictAction, ConflictType, PreUpdateOp, PreUpdateValue, Rebaser, SqliteSessionExt,
 };
 
 // -----------------------------------------------------------------------------
@@ -51,32 +50,9 @@ impl Write for ErrWrite {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Shared fixtures.
-// -----------------------------------------------------------------------------
+mod support;
 
-fn fresh_connection() -> SqliteConnection {
-    SqliteConnection::establish(":memory:").expect("open in-memory database")
-}
-
-fn create_items(conn: &mut SqliteConnection) {
-    sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
-        .execute(conn)
-        .unwrap();
-}
-
-fn make_changeset(rows: &[(i64, i64)]) -> Vec<u8> {
-    let mut conn = fresh_connection();
-    create_items(&mut conn);
-    let mut session = conn.create_session().unwrap();
-    session.attach_all().unwrap();
-    for (id, v) in rows {
-        sql_query(format!("INSERT INTO items (id, v) VALUES ({id}, {v})"))
-            .execute(&mut conn)
-            .unwrap();
-    }
-    session.changeset().unwrap()
-}
+use support::{create_items, fresh_connection, make_changeset};
 
 const GARBAGE: &[u8] = &[0xFF; 64];
 
@@ -525,7 +501,7 @@ fn preupdate_value_as_bytes_returns_none_for_null() {
         .on_preupdate(move |event| {
             if matches!(event.op(), PreUpdateOp::Insert) {
                 let v: PreUpdateValue<'_> = event.new_value(1).unwrap();
-                assert!(matches!(v.column_type(), PreUpdateColumnType::Null));
+                assert!(matches!(v.column_type(), ColumnType::Null));
                 *sink.lock() = Some(v.as_bytes().is_none());
             }
         })

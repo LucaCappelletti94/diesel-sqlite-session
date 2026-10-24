@@ -12,7 +12,7 @@
 
 use diesel::prelude::*;
 use diesel::sql_query;
-use diesel_sqlite_session::{ConflictAction, SqliteSessionExt};
+use diesel_sqlite_session::{ConflictAction, Session, SqliteSessionExt};
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -163,6 +163,15 @@ async fn bench_attach_table() {
     result.print();
 }
 
+/// A session attached to `items` that has recorded `row_count` inserts.
+fn recording_session(row_count: i32) -> (SqliteConnection, Session) {
+    let mut conn = setup_connection();
+    let mut session = conn.create_session().unwrap();
+    session.attach::<items::table>().unwrap();
+    insert_rows(&mut conn, 0, row_count);
+    (conn, session)
+}
+
 #[wasm_bindgen_test]
 async fn bench_patchset_generation() {
     log("=== Patchset Generation Benchmark ===");
@@ -178,13 +187,7 @@ async fn bench_patchset_generation() {
         let result = bench(
             &format!("patchset_{row_count}_rows"),
             iterations,
-            || {
-                let mut conn = setup_connection();
-                let mut session = conn.create_session().unwrap();
-                session.attach::<items::table>().unwrap();
-                insert_rows(&mut conn, 0, row_count);
-                (conn, session)
-            },
+            || recording_session(row_count),
             |(_conn, mut session)| {
                 let _patchset = session.patchset().unwrap();
             },
@@ -208,13 +211,7 @@ async fn bench_changeset_generation() {
         let result = bench(
             &format!("changeset_{row_count}_rows"),
             iterations,
-            || {
-                let mut conn = setup_connection();
-                let mut session = conn.create_session().unwrap();
-                session.attach::<items::table>().unwrap();
-                insert_rows(&mut conn, 0, row_count);
-                (conn, session)
-            },
+            || recording_session(row_count),
             |(_conn, mut session)| {
                 let _changeset = session.changeset().unwrap();
             },

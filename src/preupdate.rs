@@ -40,13 +40,13 @@ use std::ptr;
 use diesel::SqliteConnection;
 use thiserror::Error;
 
+use crate::column_type::ColumnType;
 use crate::errors::SqliteErrorCode;
 use crate::ffi::{
     sqlite3, sqlite3_int64, sqlite3_preupdate_blobwrite, sqlite3_preupdate_count,
     sqlite3_preupdate_depth, sqlite3_preupdate_hook, sqlite3_preupdate_new, sqlite3_preupdate_old,
-    sqlite3_value, sqlite3_value_blob, sqlite3_value_bytes, sqlite3_value_double,
-    sqlite3_value_int64, sqlite3_value_type, SQLITE_BLOB, SQLITE_DELETE, SQLITE_FLOAT,
-    SQLITE_INSERT, SQLITE_INTEGER, SQLITE_NULL, SQLITE_OK, SQLITE_TEXT, SQLITE_UPDATE,
+    sqlite3_value, sqlite3_value_double, sqlite3_value_int64, sqlite3_value_type, value_bytes,
+    SQLITE_DELETE, SQLITE_INSERT, SQLITE_OK, SQLITE_UPDATE,
 };
 use crate::slot::{self, SlotDenied};
 
@@ -96,36 +96,6 @@ impl PreUpdateOp {
     }
 }
 
-/// The dynamic type of a pre-update column value.
-///
-/// Matches the values reported by `sqlite3_value_type`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[repr(i32)]
-pub enum PreUpdateColumnType {
-    /// 64-bit signed integer.
-    Integer = SQLITE_INTEGER,
-    /// IEEE 754 double.
-    Float = SQLITE_FLOAT,
-    /// UTF-8 text.
-    Text = SQLITE_TEXT,
-    /// Raw byte string.
-    Blob = SQLITE_BLOB,
-    /// `NULL`.
-    Null = SQLITE_NULL,
-}
-
-impl PreUpdateColumnType {
-    fn from_raw(code: i32) -> Self {
-        match code {
-            SQLITE_INTEGER => Self::Integer,
-            SQLITE_FLOAT => Self::Float,
-            SQLITE_TEXT => Self::Text,
-            SQLITE_BLOB => Self::Blob,
-            _ => Self::Null,
-        }
-    }
-}
-
 /// Errors raised by the pre-update accessors.
 #[derive(Debug, Error)]
 pub enum PreUpdateError {
@@ -169,17 +139,17 @@ pub struct PreUpdateValue<'a> {
 impl<'a> PreUpdateValue<'a> {
     /// Dynamic type of the underlying `sqlite3_value`.
     #[must_use]
-    pub fn column_type(&self) -> PreUpdateColumnType {
+    pub fn column_type(&self) -> ColumnType {
         // SAFETY: `self.value` came from `_preupdate_old` / `_new` and is live
         // for the callback frame.
         let ty = unsafe { sqlite3_value_type(self.value) };
-        PreUpdateColumnType::from_raw(ty)
+        ColumnType::from_raw(ty)
     }
 
     /// True when the column value is `NULL`.
     #[must_use]
     pub fn is_null(&self) -> bool {
-        self.column_type() == PreUpdateColumnType::Null
+        self.column_type() == ColumnType::Null
     }
 
     /// Read the value as an `i64` (`sqlite3_value_int64`, with `SQLite`'s
@@ -213,23 +183,10 @@ impl<'a> PreUpdateValue<'a> {
         if self.is_null() {
             return None;
         }
-        // SAFETY: `self.value` is live for the callback frame.
-        let len = unsafe { sqlite3_value_bytes(self.value) };
-        let Ok(len) = usize::try_from(len) else {
-            return None;
-        };
-        if len == 0 {
-            return Some(&[]);
-        }
-        // SAFETY: `sqlite3_value_blob` returns `len` readable bytes for the
-        // callback duration on non-NULL, non-empty values.
-        let ptr = unsafe { sqlite3_value_blob(self.value) };
-        if ptr.is_null() {
-            return None;
-        }
-        // SAFETY: length matches what SQLite reports.
-        let slice = unsafe { std::slice::from_raw_parts(ptr.cast::<u8>(), len) };
-        Some(slice)
+        // SAFETY: a `PreUpdateValue<'a>` wraps a value `SQLite` keeps alive and
+        // unmodified for `'a`, the hook's callback frame, and NULL is ruled out
+        // above.
+        unsafe { value_bytes(self.value) }
     }
 }
 
@@ -563,9 +520,7 @@ unsafe fn cstr_lossy(ptr: *const c_char) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        cstr_lossy, trampoline, HookBox, PreUpdateColumnType, PreUpdateEvent, PreUpdateOp,
-    };
+    use super::{cstr_lossy, trampoline, HookBox, PreUpdateEvent, PreUpdateOp};
     use std::ffi::{c_char, c_void};
     use std::ptr;
     use std::sync::atomic::{AtomicU32, Ordering};
@@ -715,35 +670,5 @@ mod tests {
         }
         assert_eq!(PreUpdateOp::from_raw(0), None);
         assert_eq!(PreUpdateOp::from_raw(999), None);
-    }
-
-    #[test]
-    fn preupdate_column_type_from_raw_falls_back_to_null() {
-        assert_eq!(
-            PreUpdateColumnType::from_raw(super::SQLITE_INTEGER),
-            PreUpdateColumnType::Integer,
-        );
-        assert_eq!(
-            PreUpdateColumnType::from_raw(super::SQLITE_FLOAT),
-            PreUpdateColumnType::Float,
-        );
-        assert_eq!(
-            PreUpdateColumnType::from_raw(super::SQLITE_TEXT),
-            PreUpdateColumnType::Text,
-        );
-        assert_eq!(
-            PreUpdateColumnType::from_raw(super::SQLITE_BLOB),
-            PreUpdateColumnType::Blob,
-        );
-        assert_eq!(
-            PreUpdateColumnType::from_raw(super::SQLITE_NULL),
-            PreUpdateColumnType::Null,
-        );
-        // Any unrecognized code falls back to Null, matching the private
-        // helper's contract.
-        assert_eq!(
-            PreUpdateColumnType::from_raw(-42),
-            PreUpdateColumnType::Null,
-        );
     }
 }

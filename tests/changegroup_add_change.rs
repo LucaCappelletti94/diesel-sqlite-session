@@ -8,33 +8,14 @@ use diesel_sqlite_session::{
     ApplyFlags, Changegroup, ChangesetOp, ChangesetReader, ConflictAction, SqliteSessionExt,
 };
 
-fn fresh_connection() -> SqliteConnection {
-    SqliteConnection::establish(":memory:").expect("open in-memory database")
-}
+mod support;
 
-fn create_items(conn: &mut SqliteConnection) {
-    sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
-        .execute(conn)
-        .unwrap();
-}
-
-fn record_changeset(rows: &[(i64, i64)]) -> Vec<u8> {
-    let mut conn = fresh_connection();
-    create_items(&mut conn);
-    let mut session = conn.create_session().unwrap();
-    session.attach_all().unwrap();
-    for (id, v) in rows {
-        sql_query(format!("INSERT INTO items (id, v) VALUES ({id}, {v})"))
-            .execute(&mut conn)
-            .unwrap();
-    }
-    session.changeset().unwrap()
-}
+use support::{create_items, fresh_connection, make_changeset};
 
 #[test]
 fn add_change_folds_selected_rows() {
     // Source records four INSERTs, we only fold the two whose id is even.
-    let bytes = record_changeset(&[(1, 10), (2, 20), (3, 30), (4, 40)]);
+    let bytes = make_changeset(&[(1, 10), (2, 20), (3, 30), (4, 40)]);
 
     let mut group = Changegroup::new().unwrap();
     let mut reader = ChangesetReader::open(&bytes).unwrap();
@@ -117,7 +98,7 @@ fn add_change_preserves_op_kinds() {
 
 #[test]
 fn add_change_equivalent_to_add_when_all_rows_are_kept() {
-    let bytes = record_changeset(&[(1, 10), (2, 20), (3, 30)]);
+    let bytes = make_changeset(&[(1, 10), (2, 20), (3, 30)]);
 
     // Reference group folds the whole changeset at once.
     let mut reference = Changegroup::new().unwrap();
@@ -175,7 +156,7 @@ fn add_change_equivalent_to_add_when_all_rows_are_kept() {
 fn add_change_rejects_inverted_iterator() {
     // Inverted iterators are explicitly rejected by SQLite for add_change,
     // regardless of position.
-    let bytes = record_changeset(&[(1, 10)]);
+    let bytes = make_changeset(&[(1, 10)]);
     let mut group = Changegroup::new().unwrap();
     let mut reader = ChangesetReader::open_inverted(&bytes).unwrap();
     let row = reader.next().unwrap().expect("row available");
