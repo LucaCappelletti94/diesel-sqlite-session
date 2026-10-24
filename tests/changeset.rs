@@ -3,7 +3,7 @@
 use diesel::prelude::*;
 use diesel::sql_query;
 use diesel_sqlite_session::{
-    ChangesetColumnType, ChangesetError, ChangesetOp, ChangesetReader, SqliteSessionExt,
+    ChangesetError, ChangesetOp, ChangesetReader, ColumnType, SqliteSessionExt,
 };
 
 fn fresh_connection() -> SqliteConnection {
@@ -49,7 +49,7 @@ fn iterating_an_insert_changeset_yields_new_values_only() {
     ));
 
     let id = row.new_value(0).unwrap().expect("id present");
-    assert_eq!(id.column_type(), ChangesetColumnType::Integer);
+    assert_eq!(id.column_type(), ColumnType::Integer);
     assert_eq!(id.as_i64(), 1);
     let name = row.new_value(1).unwrap().expect("name present");
     assert_eq!(name.as_text(), Some("Widget"));

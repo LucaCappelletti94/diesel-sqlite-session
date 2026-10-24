@@ -12,34 +12,9 @@ use diesel_sqlite_session::{
 };
 use parking_lot::Mutex;
 
-fn fresh_connection() -> SqliteConnection {
-    SqliteConnection::establish(":memory:").expect("open in-memory database")
-}
+mod support;
 
-fn create_items(conn: &mut SqliteConnection) {
-    sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
-        .execute(conn)
-        .unwrap();
-}
-
-fn count_items(conn: &mut SqliteConnection) -> i64 {
-    diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM items")
-        .get_result(conn)
-        .unwrap()
-}
-
-fn make_changeset(rows: &[(i64, i64)]) -> Vec<u8> {
-    let mut conn = fresh_connection();
-    create_items(&mut conn);
-    let mut session = conn.create_session().unwrap();
-    session.attach_all().unwrap();
-    for (id, v) in rows {
-        sql_query(format!("INSERT INTO items (id, v) VALUES ({id}, {v})"))
-            .execute(&mut conn)
-            .unwrap();
-    }
-    session.changeset().unwrap()
-}
+use support::{count_items, create_items, fresh_connection, make_changeset};
 
 #[test]
 fn v3_filter_sees_op_and_table() {

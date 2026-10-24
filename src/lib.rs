@@ -6,6 +6,7 @@ mod apply;
 mod apply_v2;
 mod blob;
 mod changeset;
+mod column_type;
 mod errors;
 mod ffi;
 mod preupdate;
@@ -17,13 +18,10 @@ mod transform;
 
 pub use apply_v2::{ApplyFlags, ApplyOutcome, ConflictInfo};
 pub use blob::{BlobError, BlobMode, SqliteBlob};
-pub use changeset::{
-    ChangesetColumnType, ChangesetError, ChangesetOp, ChangesetReader, ChangesetRow, ChangesetValue,
-};
+pub use changeset::{ChangesetError, ChangesetOp, ChangesetReader, ChangesetRow, ChangesetValue};
+pub use column_type::ColumnType;
 pub use errors::{ApplyError, ConflictAction, ConflictType, SessionError, SqliteErrorCode};
-pub use preupdate::{
-    PreUpdateColumnType, PreUpdateError, PreUpdateEvent, PreUpdateHook, PreUpdateOp, PreUpdateValue,
-};
+pub use preupdate::{PreUpdateError, PreUpdateEvent, PreUpdateHook, PreUpdateOp, PreUpdateValue};
 pub use session::{set_stream_size, stream_size, Session};
 pub use transform::{
     concat_changesets, concat_changesets_strm, invert_changeset, invert_changeset_strm,

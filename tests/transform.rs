@@ -8,44 +8,17 @@ use diesel_sqlite_session::{
     ChangesetReader, ConflictAction, SqliteSessionExt,
 };
 
-fn fresh_connection() -> SqliteConnection {
-    SqliteConnection::establish(":memory:").expect("open in-memory database")
-}
+mod support;
 
-fn create_items(conn: &mut SqliteConnection) {
-    sql_query("CREATE TABLE items (id INTEGER PRIMARY KEY, v INTEGER)")
-        .execute(conn)
-        .unwrap();
-}
-
-fn count_items(conn: &mut SqliteConnection) -> i64 {
-    diesel::dsl::sql::<diesel::sql_types::BigInt>("SELECT COUNT(*) FROM items")
-        .get_result(conn)
-        .unwrap()
-}
+use support::{count_items, create_items, fresh_connection, items, make_changeset};
 
 fn item_value(conn: &mut SqliteConnection, id: i64) -> i64 {
-    diesel::dsl::sql::<diesel::sql_types::BigInt>(&format!("SELECT v FROM items WHERE id = {id}"))
-        .get_result(conn)
-        .unwrap()
-}
-
-fn make_insert_changeset(rows: &[(i64, i64)]) -> Vec<u8> {
-    let mut conn = fresh_connection();
-    create_items(&mut conn);
-    let mut session = conn.create_session().unwrap();
-    session.attach_all().unwrap();
-    for (id, v) in rows {
-        sql_query(format!("INSERT INTO items (id, v) VALUES ({id}, {v})"))
-            .execute(&mut conn)
-            .unwrap();
-    }
-    session.changeset().unwrap()
+    items::table.find(id).select(items::v).first(conn).unwrap()
 }
 
 #[test]
 fn invert_flips_insert_into_delete_and_round_trips_via_apply() {
-    let bytes = make_insert_changeset(&[(1, 10), (2, 20)]);
+    let bytes = make_changeset(&[(1, 10), (2, 20)]);
     let inverted = invert_changeset(&bytes).expect("invert succeeds");
     assert_ne!(inverted, [] as [u8; 0]);
 
@@ -85,8 +58,8 @@ fn invert_garbage_changeset_returns_invert_failed() {
 
 #[test]
 fn concat_merges_two_disjoint_changesets() {
-    let a = make_insert_changeset(&[(1, 10)]);
-    let b = make_insert_changeset(&[(2, 20)]);
+    let a = make_changeset(&[(1, 10)]);
+    let b = make_changeset(&[(2, 20)]);
     let concatenated = concat_changesets(&a, &b).expect("concat succeeds");
 
     let mut replica = fresh_connection();
@@ -101,7 +74,7 @@ fn concat_merges_two_disjoint_changesets() {
 
 #[test]
 fn concat_empty_side_returns_empty_changeset_error() {
-    let a = make_insert_changeset(&[(1, 10)]);
+    let a = make_changeset(&[(1, 10)]);
     let err = concat_changesets(&a, &[]).unwrap_err();
     assert!(matches!(err, ChangesetError::EmptyChangeset), "{err:?}");
     let err = concat_changesets(&[], &a).unwrap_err();
@@ -111,9 +84,9 @@ fn concat_empty_side_returns_empty_changeset_error() {
 #[test]
 fn changegroup_aggregates_multiple_changesets() {
     let mut group = Changegroup::new().expect("new group");
-    group.add(&make_insert_changeset(&[(1, 10)])).unwrap();
-    group.add(&make_insert_changeset(&[(2, 20)])).unwrap();
-    group.add(&make_insert_changeset(&[(3, 30)])).unwrap();
+    group.add(&make_changeset(&[(1, 10)])).unwrap();
+    group.add(&make_changeset(&[(2, 20)])).unwrap();
+    group.add(&make_changeset(&[(3, 30)])).unwrap();
     let merged = group.output().expect("output succeeds");
     assert_ne!(merged, [] as [u8; 0]);
 
@@ -131,7 +104,7 @@ fn changegroup_aggregates_multiple_changesets() {
 #[test]
 fn changegroup_collapses_insert_then_update_into_single_insert() {
     // Session A on a fresh DB: INSERT id=1 v=10.
-    let insert_bytes = make_insert_changeset(&[(1, 10)]);
+    let insert_bytes = make_changeset(&[(1, 10)]);
 
     // Session B on a DB that already has id=1 v=10: UPDATE it to v=99.
     let mut second = fresh_connection();
@@ -172,7 +145,7 @@ fn changegroup_add_empty_changeset_returns_empty_error() {
 #[test]
 fn changegroup_output_is_idempotent() {
     let mut group = Changegroup::new().unwrap();
-    group.add(&make_insert_changeset(&[(1, 10)])).unwrap();
+    group.add(&make_changeset(&[(1, 10)])).unwrap();
     let first = group.output().unwrap();
     let second = group.output().unwrap();
     assert_eq!(first, second, "output twice must yield the same bytes");
@@ -188,7 +161,7 @@ fn changegroup_set_schema_binds_a_database() {
         .expect("set_schema succeeds on the main database");
 
     // Adding a rowid-table changeset must still work with a schema attached.
-    group.add(&make_insert_changeset(&[(1, 10)])).unwrap();
+    group.add(&make_changeset(&[(1, 10)])).unwrap();
     let merged = group.output().unwrap();
     assert_ne!(merged, [] as [u8; 0]);
 }
@@ -227,8 +200,8 @@ fn concat_matches_two_changegroup_add_calls() {
     // Given the same two changesets, concat and Changegroup ought to produce
     // functionally equivalent outputs (byte-equal is not guaranteed by SQLite,
     // so we compare via applied state).
-    let a = make_insert_changeset(&[(1, 10)]);
-    let b = make_insert_changeset(&[(2, 20)]);
+    let a = make_changeset(&[(1, 10)]);
+    let b = make_changeset(&[(2, 20)]);
 
     let concatenated = concat_changesets(&a, &b).unwrap();
 
@@ -258,7 +231,7 @@ fn concat_matches_two_changegroup_add_calls() {
 fn invert_via_apply_v2_invert_flag_matches_pre_inverted_bytes() {
     // Apply(bytes, INVERT) must have the same replica effect as
     // Apply(invert(bytes), no flag).
-    let bytes = make_insert_changeset(&[(1, 10)]);
+    let bytes = make_changeset(&[(1, 10)]);
     let inverted = invert_changeset(&bytes).unwrap();
 
     let mut replica_a = fresh_connection();

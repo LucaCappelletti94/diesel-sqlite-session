@@ -53,6 +53,15 @@ fn insert_rows(conn: &mut SqliteConnection, start: i32, end: i32) {
     }
 }
 
+/// An INSERT-only changeset for rows `start..end`, recorded on a fresh connection.
+fn insert_changeset(start: i32, end: i32) -> Vec<u8> {
+    let mut conn = setup_connection();
+    let mut session = conn.create_session().unwrap();
+    session.attach::<items::table>().unwrap();
+    insert_rows(&mut conn, start, end);
+    session.changeset().unwrap()
+}
+
 /// Update rows using ORM DSL.
 fn update_rows(conn: &mut SqliteConnection, count: i32) {
     for i in 0..count {
@@ -275,13 +284,7 @@ fn bench_apply_changeset_strm_vs_buffered(c: &mut Criterion) {
     let mut group = c.benchmark_group("apply_changeset_variant");
 
     for row_count in &[10, 100, 500] {
-        let changeset = {
-            let mut conn = setup_connection();
-            let mut session = conn.create_session().unwrap();
-            session.attach::<items::table>().unwrap();
-            insert_rows(&mut conn, 0, *row_count);
-            session.changeset().unwrap()
-        };
+        let changeset = insert_changeset(0, *row_count);
 
         group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
         group.bench_with_input(
@@ -328,13 +331,7 @@ fn bench_apply_changeset_with_conflict_replace(c: &mut Criterion) {
 
     for row_count in &[10, 100, 500] {
         // Source: rows 0..count with value = i.
-        let changeset = {
-            let mut conn = setup_connection();
-            let mut session = conn.create_session().unwrap();
-            session.attach::<items::table>().unwrap();
-            insert_rows(&mut conn, 0, *row_count);
-            session.changeset().unwrap()
-        };
+        let changeset = insert_changeset(0, *row_count);
 
         group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
         group.bench_with_input(
@@ -366,13 +363,7 @@ fn bench_changeset_reader_iteration(c: &mut Criterion) {
     let mut group = c.benchmark_group("changeset_reader_iteration");
 
     for row_count in &[10, 100, 500] {
-        let changeset = {
-            let mut conn = setup_connection();
-            let mut session = conn.create_session().unwrap();
-            session.attach::<items::table>().unwrap();
-            insert_rows(&mut conn, 0, *row_count);
-            session.changeset().unwrap()
-        };
+        let changeset = insert_changeset(0, *row_count);
 
         group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
         group.bench_with_input(
@@ -401,13 +392,7 @@ fn bench_invert_changeset(c: &mut Criterion) {
     let mut group = c.benchmark_group("invert_changeset");
 
     for row_count in &[10, 100, 500] {
-        let changeset = {
-            let mut conn = setup_connection();
-            let mut session = conn.create_session().unwrap();
-            session.attach::<items::table>().unwrap();
-            insert_rows(&mut conn, 0, *row_count);
-            session.changeset().unwrap()
-        };
+        let changeset = insert_changeset(0, *row_count);
 
         group.throughput(Throughput::Elements(u64::try_from(*row_count).unwrap()));
         group.bench_with_input(
@@ -429,20 +414,8 @@ fn bench_concat_changesets(c: &mut Criterion) {
     let mut group = c.benchmark_group("concat_changesets");
 
     for row_count in &[10, 100, 500] {
-        let a = {
-            let mut conn = setup_connection();
-            let mut session = conn.create_session().unwrap();
-            session.attach::<items::table>().unwrap();
-            insert_rows(&mut conn, 0, *row_count);
-            session.changeset().unwrap()
-        };
-        let b = {
-            let mut conn = setup_connection();
-            let mut session = conn.create_session().unwrap();
-            session.attach::<items::table>().unwrap();
-            insert_rows(&mut conn, *row_count, *row_count * 2);
-            session.changeset().unwrap()
-        };
+        let a = insert_changeset(0, *row_count);
+        let b = insert_changeset(*row_count, *row_count * 2);
 
         group.throughput(Throughput::Elements(u64::try_from(*row_count * 2).unwrap()));
         group.bench_with_input(
